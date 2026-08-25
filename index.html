@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobil Barkod Tarayıcı</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #111;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 4 / 3;
+            background: #000;
+            overflow: hidden;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        /* Kameranın ortasındaki kırmızı hedef çizgisi (Tarama Alanı) */
+        #scan-line {
+            position: absolute;
+            top: 50%;
+            left: 5%;
+            width: 90%;
+            height: 2px;
+            background: red;
+            box-shadow: 0 0 8px red;
+            z-index: 10;
+        }
+        /* Görsel filtreleme yapılan gizli/arka plan canvası */
+        canvas {
+            display: none; 
+        }
+        #result-box {
+            width: 90%;
+            max-width: 500px;
+            margin-top: 15px;
+            padding: 15px;
+            background: #222;
+            border-radius: 8px;
+            border: 1px solid #333;
+            box-sizing: border-box;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .success { color: #00ffcc; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">Canlı Çizgi Analiz Motoru</h3>
+    <p style="font-size: 12px; color: #aaa; margin: 0 0 15px 0;">Barkodu kırmızı çizgiye ortalayın</p>
+
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <!-- Video karelerini işleyeceğimiz gizli canvas -->
+    <canvas id="processingCanvas"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">Kamera başlatılıyor...</span>
+        <br><br>
+        <strong>Deşifre Edilen Kod:</strong> <span id="barcode-output">-</span>
+    </div>
+
+<script>
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+
+// 1. CEP TELEFONU ARKA KAMERASINI BAŞLATMA
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                // 'environment' parametresi cihazın ARKA kamerasını zorunlu kılar
+                facingMode: { exact: "environment" },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        });
+        video.srcObject = stream;
+        statusText.innerText = "Arka kamera aktif. Taranıyor...";
+        
+        // Kamera hazır olduğunda tarama döngüsünü başlat
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        console.error("Arka kamera bulunamadı, genel kamera deneniyor...", err);
+        // Eğer 'exact environment' hata verirse (örneğin bilgisayarda test ediliyorsa) düz kamerayı aç
+        try {
+            const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = fallbackStream;
+            statusText.innerText = "Kamera aktif (Fallback). Taranıyor...";
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                requestAnimationFrame(scanLoop);
+            };
+        } catch (fallbackErr) {
+            statusText.innerText = "Kamera erişim hatası: " + fallbackErr.message;
+        }
+    }
+}
+
+// 2. SÜREKLİ TARAMA DÖNGÜSÜ (SCAN LOOP)
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        // Mevcut video karesini gizli canvas'a çiz
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Görüntü işleme ve analiz fonksiyonunu çağır
+        const detectedBarcode = processFrame();
+        
+        if (detectedBarcode) {
+            outputText.innerHTML = `<span class="success">${detectedBarcode}</span>`;
+            // Gerçek sistemlerde kod bulununca tarama burada durdurulabilir (return;), 
+            // biz canlı analizi görmek için devam ettiriyoruz.
+        }
+    }
+    // Cep telefonunda saniyede ~30-60 kare hızında bu fonksiyonu tekrarla
+    requestAnimationFrame(scanLoop);
+}
+
+// 3. MOBİL DALGALANMA FİLTRESİ VE ORANSAL ANALİZ MOTORU
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Sadece kırmızı çizginin denk geldiği dikey ortadaki TEK BİR SATIRI (Scanline) analiz ediyoruz.
+    // Bu, mobil işlemcinin yorulmasını engeller ve performansı uçurur.
+    const centerY = Math.floor(height / 2);
+    const imgData = ctx.getImageData(0, centerY, width, 1);
+    const pixels = imgData.data;
+
+    // A. Adaptif Eşikleme (Gölge ve Parlama Temizliği)
+    let scanlineBitonal = [];
+    const filterWindow = 7; // El titremesi dalgalanmalarını yumuşatmak için komşu piksel penceresi
+
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        // Parlaklık hesaplama (Luminance)
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+
+        // Mobil ortamdaki ışık patlamalarını çözmek için lokal ortalama hesabı
+        let localSum = 0;
+        let localCount = 0;
+        for (let i = -filterWindow; i <= filterWindow; i++) {
+            const targetX = x + i;
+            if (targetX >= 0 && targetX < width) {
+                const tIdx = targetX * 4;
+                localSum += (0.299 * pixels[tIdx] + 0.587 * pixels[tIdx+1] + 0.114 * pixels[tIdx+2]);
+                localCount++;
+            }
+        }
+        const localAverage = localSum / localCount;
+
+        // Karar: Ortalamadan bariz karanlık olan yerler SİYAH (1), diğerleri BEYAZ (0)
+        // -15 değeri el gölgelerini süzecek hassasiyet eşiğidir.
+        const bit = gray < (localAverage - 15) ? 1 : 0;
+        scanlineBitonal.push(bit);
+    }
+
+    // B. Çizgi Blok Genişliklerini Gruplama (Run-Length)
+    let runs = [];
+    let currentBit = scanlineBitonal[0];
+    let runLength = 1;
+
+    for (let x = 1; x < scanlineBitonal.length; x++) {
+        if (scanlineBitonal[x] === currentBit) {
+            runLength++;
+        } else {
+            // Kameradaki dijital karıncalanmaları (1-2 piksellik hataları) filtrele
+            if (runLength > 2) {
+                runs.push({ bit: currentBit, pixelWidth: runLength });
+            }
+            currentBit = scanlineBitonal[x];
+            runLength = 1;
+        }
+    }
+    runs.push({ bit: currentBit, pixelWidth: runLength });
+
+    // C. EAN-13 Guard Pattern (Başlangıç 101) Arama ve Oranlama
+    // Barkodun nerede başlayıp bittiğini anlamak için en az 15-20 çizgi grubu olmalı
+    if (runs.length < 20) return null;
+
+    // Geçerli bir başlangıç arıyoruz (Siyah-Beyaz-Siyah ardışık üçlüsü)
+    for (let i = 0; i < runs.length - 15; i++) {
+        if (runs[i].bit === 1 && runs[i+1].bit === 0 && runs[i+2].bit === 1) {
+            
+            // Telefonun barkoda uzaklığına göre 1 modülün kaç piksel olduğunu hesapla
+            const estModule = (runs[i].pixelWidth + runs[i+1].pixelWidth + runs[i+2].pixelWidth) / 3;
+            
+            // Eğer hesaplanan çizgi kalınlığı aşırı küçükse gürültüdür, geç.
+            if (estModule < 1.5) continue;
+
+            // İlk karakteri (7 modül) test etmek için sonraki çizgileri oranla
+            let binaryString = "101"; // Başlangıç kodumuz sabit
+            let currentIdx = i + 3;
+
+            // Test amaçlı sonraki 4 çizgiyi (1 karakteri) deşifre etmeyi deneyelim
+            for (let j = 0; j < 4; j++) {
+                if (!runs[currentIdx + j]) break;
+                const exactModules = runs[currentIdx + j].pixelWidth / estModule;
+                const roundedModules = Math.min(4, Math.max(1, Math.round(exactModules))); // 1 ile 4 arasında sınırla
+                binaryString += runs[currentIdx + j].bit.toString().repeat(roundedModules);
+            }
+
+            // Eğer elde ettiğimiz ilk karakter şablonu EAN standartlarında "5" rakamına denk geliyorsa
+            // (Simülasyondaki sağ taraftaki 5'in kodu "0110001" idi)
+            if (binaryString.includes("0110001")) {
+                return `EAN-13 Algılandı! İlk Okunan Parça Sembolü: '5' (Modül Ölçüsü: ${estModule.toFixed(1)}px)`;
+            }
+        }
+    }
+
+    return null;
+}
+
+// Sayfa yüklendiğinde kamerayı başlat
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
