@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kararlı Barkod Okuyucu</title>
+    <title>Gerçek Zamanlı EAN-13 Okuyucu</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; }
         #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
@@ -11,12 +11,12 @@
         #scan-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
         canvas { display: none; }
         #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
-        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; min-height: 35px; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <h3 style="margin: 15px 0 5px 0;">Evrensel Çizgi Deşifre Motoru</h3>
+    <h3 style="margin: 15px 0 5px 0;">EAN-13 Çizgi Analiz Motoru</h3>
     <div id="camera-container">
         <video id="webcam" autoplay playsinline></video>
         <div id="scan-line"></div>
@@ -24,15 +24,17 @@
     <canvas id="processingCanvas"></canvas>
 
     <div id="result-box">
-        <strong>Sistem Durumu:</strong> <span id="status">Kamera Hazırlanıyor...</span>
+        <strong>Sistem Durumu:</strong> <span id="status">Başlatılıyor...</span>
         <br>
         <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
     </div>
 
 <script>
+// EAN-13 Deşifre Tabloları (Sol L-Set, Sol G-Set, Sağ R-Set)
 const L_SET = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"];
 const G_SET = ["0100111", "0110011", "0011011", "0111001", "0001101", "0010011", "0000101", "0010001", "0001001", "0010111"];
 const R_SET = ["1110010", "1100110", "1101100", "1000010", "1011100", "1001110", "1010000", "1000100", "1001000", "1110100"];
+// İlk haneyi belirleyen Sol Bölge şeması
 const FIRST_DIGIT_MAP = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
 
 const video = document.getElementById('webcam');
@@ -43,28 +45,29 @@ const outputText = document.getElementById('barcode-output');
 
 async function initCamera() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
+        // Cihazın odaklama ve video yeteneklerini maksimuma çekiyoruz
+        const constraints = {
+            video: {
+                facingMode: "environment", // exact kaldırıldı, PC'de webcam açılır
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                // Gelişmiş tarayıcılar için odaklama desteği (Chrome Mobile)
+                focusMode: "continuous" 
+            },
             audio: false
-        });
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
-        statusText.innerText = "Kamera aktif. Barkodu çizgiye ortalayın.";
+        statusText.innerText = "Kamera aktif. Barkodu düz tutun.";
 
-        video.onloadedmetadata = async () => {
+        video.onloadedmetadata = () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            
-            // Kamera odaklama desteği varsa aktifleştir
+            // Eğer gelişmiş odaklama ayarı varsa kameraya uygula
             const track = stream.getVideoTracks()[0];
-            if (track && track.getCapabilities) {
-                const capabilities = track.getCapabilities();
-                let advancedConstraints = {};
-                if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                    advancedConstraints.focusMode = 'continuous';
-                }
-                if (Object.keys(advancedConstraints).length > 0) {
-                    try { await track.applyConstraints({ advanced: [advancedConstraints] }); } catch (e) {}
-                }
+            if (track.getCapabilities && track.getCapabilities().focusMode) {
+                track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
             }
             requestAnimationFrame(scanLoop);
         };
@@ -76,31 +79,23 @@ async function initCamera() {
 function scanLoop() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        const height = canvas.height;
-        const centerY = Math.floor(height / 2);
-        // Telefon sallantılarını engellemek için merkeze yakın 3 farklı hattan tarıyoruz
-        const scanLines = [centerY, centerY - 10, centerY + 10];
-        
-        for (let y of scanLines) {
-            const result = processFrameAtY(y);
-            if (result) {
-                outputText.innerText = result; // Matematik filtresi yok, bulunan rakamları anında basar
-                if (navigator.vibrate) navigator.vibrate(150);
-                break;
-            }
+        const result = processFrame();
+        if (result && result.length === 13) {
+            outputText.innerText = result; // Ekranda direkt 13 haneli RAKAMI gösterir
         }
     }
     requestAnimationFrame(scanLoop);
 }
 
-function processFrameAtY(targetY) {
+function processFrame() {
     const width = canvas.width;
-    const pixels = ctx.getImageData(0, targetY, width, 1).data;
+    const height = canvas.height;
+    const centerY = Math.floor(height / 2);
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
 
-    // 1. Siyah-Beyaz Eşikleme (İlk çalışan sürümün parametreleri)
+    // 1. Adaptif Siyah/Beyaz Dönüşümü
     let scanline = [];
-    const windowSize = 9; 
+    const windowSize = 9;
     for (let x = 0; x < width; x++) {
         const idx = x * 4;
         const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
@@ -108,14 +103,15 @@ function processFrameAtY(targetY) {
         let sum = 0, count = 0;
         for (let i = -windowSize; i <= windowSize; i++) {
             if (x + i >= 0 && x + i < width) {
-                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                const tIdx = (x + i) * 4;
+                sum += (0.299 * pixels[tIdx] + 0.587 * pixels[tIdx+1] + 0.114 * pixels[tIdx+2]);
                 count++;
             }
         }
         scanline.push(gray < (sum / count - 12) ? 1 : 0);
     }
 
-    // 2. Çizgi Kalınlığı Bloklama
+    // 2. Çizgi Bloklarını Gruplama
     let runs = [];
     let currentBit = scanline[0], runLen = 1;
     for (let x = 1; x < scanline.length; x++) {
@@ -129,24 +125,28 @@ function processFrameAtY(targetY) {
 
     if (runs.length < 50) return null;
 
-    // 3. Deşifre Etme
+    // 3. EAN-13 Sınır ve Oran Analizi
     for (let i = 0; i < runs.length - 55; i++) {
+        // Başlangıç Koruyucu Çizgisi Kontrolü (101)
         if (runs[i].bit === 1 && runs[i+1].bit === 0 && runs[i+2].bit === 1) {
             const estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
-            if (estModule < 1.0) continue;
+            if (estModule < 1.2) continue;
 
             let currentIdx = i + 3;
             let leftBits = "", rightBits = "";
 
-            for (let c = 0; c < 24; c++) {
+            // Sol Bölgeyi Oku (6 adet 7'şer modüllük karakter)
+            for (let c = 0; c < 24; c++) { // 6 karakter * 4 çizgi/boşluk = 24 blok
                 if (!runs[currentIdx]) break;
                 let mods = Math.min(4, Math.max(1, Math.round(runs[currentIdx].w / estModule)));
                 leftBits += runs[currentIdx].bit.toString().repeat(mods);
                 currentIdx++;
             }
 
-            currentIdx += 5; // Orta boşluğu geç
+            // Orta Koruyucu Çizgileri Atla (01010 -> Genelde 5 blok)
+            currentIdx += 5;
 
+            // Sağ Bölgeyi Oku (6 adet 7'şer modüllük karakter)
             for (let c = 0; c < 24; c++) {
                 if (!runs[currentIdx]) break;
                 let mods = Math.min(4, Math.max(1, Math.round(runs[currentIdx].w / estModule)));
@@ -154,10 +154,12 @@ function processFrameAtY(targetY) {
                 currentIdx++;
             }
 
+            // 4. İkilik Blokları Rakamlara Eşleme (Deşifre)
             if (leftBits.length >= 42 && rightBits.length >= 42) {
                 let digits = [];
                 let structure = "";
 
+                // Sol tarafı çöz
                 for (let k = 0; k < 6; k++) {
                     let part = leftBits.substring(k * 7, (k + 1) * 7);
                     let lIdx = L_SET.indexOf(part);
@@ -166,22 +168,26 @@ function processFrameAtY(targetY) {
                     else if (gIdx !== -1) { digits.push(gIdx); structure += "G"; }
                 }
 
+                // Sağ tarafı çöz
                 for (let k = 0; k < 6; k++) {
                     let part = rightBits.substring(k * 7, (k + 1) * 7);
                     let rIdx = R_SET.indexOf(part);
                     if (rIdx !== -1) digits.push(rIdx);
                 }
 
+                // İlk haneyi yapıdan türet
                 let firstDigit = FIRST_DIGIT_MAP.indexOf(structure);
                 if (firstDigit !== -1 && digits.length === 12) {
                     digits.unshift(firstDigit);
-                    return digits.join(""); // MATEMATİK KONTROLÜ YOK: Direkt ekrana basar.
+                    return digits.join(""); // 13 haneli temiz rakam dizisi döndürür
                 }
             }
         }
     }
     return null;
 }
+
+window.addEventListener('DOMContentLoaded', initCamera);
 </script>
 </body>
 </html>
