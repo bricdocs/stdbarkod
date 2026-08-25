@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EAN-13 Okuyucu (Zoom Destekli)</title>
+    <title>EAN-13 Okuyucu (Kararlı Sürüm)</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; }
         #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
@@ -16,7 +16,7 @@
 </head>
 <body>
 
-    <h3 style="margin: 15px 0 5px 0;">EAN-13 Çizgi Analiz Motoru</h3>
+    <h3 style="margin: 15px 0 5px 0;">EAN-13 Kararlı Çizgi Analiz Motoru</h3>
     <div id="camera-container">
         <video id="webcam" autoplay playsinline></video>
         <div id="scan-line"></div>
@@ -46,47 +46,38 @@ async function initCamera() {
         const constraints = {
             video: {
                 facingMode: "environment",
-                width: { ideal: 1920 }, // Piksel kaybını önlemek için çözünürlüğü Full HD seviyesine çektik
-                height: { ideal: 1080 }
+                width: { ideal: 1280 }, // Düşük çözünürlüklü PC kameralarını patlatmayacak esnek sınır
+                height: { ideal: 720 }
             },
             audio: false
         };
         
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
-        statusText.innerText = "Kamera aktif. Optimizasyon yapılıyor...";
 
         video.onloadedmetadata = async () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             
-            // --- TELEFONLAR İÇİN DİJİTAL YAKINLAŞTIRMA (ZOOM) VE NETLEME AYARI ---
             const track = stream.getVideoTracks()[0];
             const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-            
             let advancedConstraints = {};
             
-            // Cihaz sürekli odaklamayı (Continuous Focus) destekliyorsa aktifleştir
             if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
                 advancedConstraints.focusMode = 'continuous';
             }
             
-            // Cihaz zoom destekliyorsa görüntüyü otomatik olarak 2.5 kat yakınlaştır
-            // Böylece barkodu telefona çok yaklaştırmadan, uzaktan net okuma yapılabilecek
             if (capabilities.zoom) {
-                const targetZoom = Math.min(2.5, capabilities.zoom.max);
+                // Aşırı yakınlaştırma el titremesini artırabileceği için zoom oranını 2.0 kat ile sınırladık
+                const targetZoom = Math.min(2.0, capabilities.zoom.max);
                 advancedConstraints.zoom = targetZoom;
-                statusText.innerText = `Kamera aktif (${targetZoom}x Yakınlaştırıldı).`;
+                statusText.innerText = `Kamera aktif (${targetZoom}x Odaklandı).`;
             } else {
-                statusText.innerText = "Kamera aktif (Zoom desteklenmiyor). Uzaktan ortalayın.";
+                statusText.innerText = "Kamera aktif. Barkodu yaklaştırın.";
             }
             
             if (Object.keys(advancedConstraints).length > 0) {
-                try {
-                    await track.applyConstraints({ advanced: [advancedConstraints] });
-                } catch (e) {
-                    console.warn("Gelişmiş kamera ayarları uygulanamadı:", e);
-                }
+                try { await track.applyConstraints({ advanced: [advancedConstraints] }); } catch (e) {}
             }
             
             requestAnimationFrame(scanLoop);
@@ -99,25 +90,36 @@ async function initCamera() {
 function scanLoop() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const result = processFrame();
-        if (result && result.length === 13) {
-            outputText.innerText = result; 
-            // Başarılı okumada telefonu hafifçe titret (Mobil cihazlar için)
+        
+        // BAŞARIYI ARTIRAN STRATEJİ: Tek çizgi yerine 3 farklı dikey koordinattan (orta, ortanın az altı, az üstü) tarama yapıyoruz.
+        const height = canvas.height;
+        const centerY = Math.floor(height / 2);
+        const scanOffsets = [centerY, centerY - 15, centerY + 15]; 
+        
+        let finalResult = null;
+        for (let y of scanOffsets) {
+            const result = processFrameAtY(y);
+            if (result && result.length === 13) {
+                finalResult = result;
+                break; // Herhangi bir hat kod deşifre ederse döngüden çık
+            }
+        }
+
+        if (finalResult) {
+            outputText.innerText = finalResult; 
             if (navigator.vibrate) navigator.vibrate(200); 
         }
     }
     requestAnimationFrame(scanLoop);
 }
 
-function processFrame() {
+function processFrameAtY(targetY) {
     const width = canvas.width;
-    const height = canvas.height;
-    const centerY = Math.floor(height / 2);
-    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+    const pixels = ctx.getImageData(0, targetY, width, 1).data;
 
-    // 1. Adaptif Siyah/Beyaz Dönüşümü (Genişletilmiş Pencere)
+    // 1. Adaptif Siyah/Beyaz Dönüşümü
     let scanline = [];
-    const windowSize = 15; // Çözünürlük arttığı için pencere boyutunu büyüttük
+    const windowSize = 11; 
     for (let x = 0; x < width; x++) {
         const idx = x * 4;
         const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
@@ -130,8 +132,7 @@ function processFrame() {
                 count++;
             }
         }
-        // -15 hassasiyet eşiği mobil ortamdaki parlamaları daha iyi temizler
-        scanline.push(gray < (sum / count - 15) ? 1 : 0);
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
     }
 
     // 2. Çizgi Bloklarını Gruplama
@@ -152,7 +153,7 @@ function processFrame() {
     for (let i = 0; i < runs.length - 55; i++) {
         if (runs[i].bit === 1 && runs[i+1].bit === 0 && runs[i+2].bit === 1) {
             const estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
-            if (estModule < 1.5) continue;
+            if (estModule < 1.0) continue;
 
             let currentIdx = i + 3;
             let leftBits = "", rightBits = "";
@@ -164,7 +165,7 @@ function processFrame() {
                 currentIdx++;
             }
 
-            currentIdx += 5; // Orta çizgileri atla
+            currentIdx += 5; 
 
             for (let c = 0; c < 24; c++) {
                 if (!runs[currentIdx]) break;
@@ -195,14 +196,14 @@ function processFrame() {
                 if (firstDigit !== -1 && digits.length === 12) {
                     digits.unshift(firstDigit);
                     
-                    // Kontrol Basamağı Doğrulaması (Checksum)
+                    // Kontrol Basamağı Doğrulaması (EAN Checksum)
                     let sum = 0;
                     for (let n = 0; n < 12; n++) {
                         sum += digits[n] * (n % 2 === 0 ? 1 : 3);
                     }
                     let check = (10 - (sum % 10)) % 10;
                     
-                    // Eğer matematiksel kontrol doğruysa kodu bas
+                    // Son hane kontrol basamağına eşitse sonucu başarıyla döndür
                     if (check === digits[12]) {
                         return digits.join("");
                     }
