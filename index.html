@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Tuval Destekli Kart Okuyucu v50.3</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* v50.3 LOG KURALI: Tarama Çizgisi Eski Tam Genişliğine (%90) Döndürüldü */
+        #scan-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
+        
+        /* Canlı Çizgi Analiz Tuvali (v50.0 Kararlılığına Geri Döndü) */
+        #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
+        
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
+        .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
+    <div class="version-tag">Yazılım Sürümü: v50.3</div>
+    
+    <!-- Kamera Görünümü -->
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <!-- Eski geniş ve net formuna dönen canlı tuval -->
+    <canvas id="debugCanvas"></canvas>
+
+    <!-- Arka plan piksellerinin işlendiği gizli tuval -->
+    <canvas id="processingCanvas" style="display:none;"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">Başlatılıyor...</span>
+        <br>
+        <strong>Deşifre Edilen Saf Binary Kod:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
+    </div>
+
+<script>
+/* 
+==================================================================================
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v50.3)
+----------------------------------------------------------------------------------
+// DEĞİŞİKLİK 1 (Fiziksel): 
+   v50.2'deki daraltılmış %35-%25 kırpma tamamen iptal edildi. Tarama çizgisi ve 
+   canlı tuval eski tam genişliğine döndürüldü. Kullanıcı alanı genişletildi.
+
+// DEĞİŞİKLİK 2 (Yazılımsal Filtre): 
+   "Ardışık Yoğun Paket Filtresi" eklendi. Algoritma artık ilk gördüğü siyah çizgiye 
+   bodoslama kilitlenmiyor. O çizgiden sonra peş peşe barların (siyah/beyaz geçişlerinin) 
+   sıkça dizilip dizilmediğini kontrol ediyor. Tek başına duran sahte kenar/harf 
+   çizgilerini "gürültü" sayıp otomatik olarak atlıyor.
+==================================================================================
+*/
+
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+const debugCanvas = document.getElementById('debugCanvas');
+const dCtx = debugCanvas.getContext('2d');
+
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        });
+        video.srcObject = stream;
+        statusText.innerText = "v50.3 Aktif. Barkodu yeşil çizgiye ortalayın.";
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            debugCanvas.width = video.videoWidth;
+            debugCanvas.height = 100; 
+
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        statusText.innerText = "Kamera Başlatılamadı: " + err.message;
+    }
+}
+
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const result = processFrame();
+        
+        if (result && result.length === 13) {
+            outputText.innerText = result; 
+            if (navigator.vibrate) navigator.vibrate(150);
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = Math.floor(height / 2);
+    
+    // v50.3: Tarama alanı yeniden tam genişliğe (0'dan width'e) ayarlandı
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+
+    // 1. Adaptif Siyah/Beyaz Dönüşümü (v50.0 TANI SİSTEMİ BİREBİR AYNI)
+    let scanline = [];
+    const windowSize = 9;
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        
+        let sum = 0, count = 0;
+        for (let i = -windowSize; i <= windowSize; i++) {
+            if (x + i >= 0 && x + i < width) {
+                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                count++;
+            }
+        }
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
+    }
+
+    // -----------------------------------------------------------------
+    // CANLI TUVAL ÇİZİMİ (v50.0 Kararlılığına Geri Döndü)
+    // -----------------------------------------------------------------
+    dCtx.fillStyle = "#FFFFFF"; 
+    dCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    dCtx.fillStyle = "#FF0000"; 
+    for (let x = 0; x < width; x++) {
+        if (scanline[x] === 1) {
+            dCtx.fillRect(x, 0, 1, debugCanvas.height);
+        }
+    }
+    // -----------------------------------------------------------------
+
+    // 2. Çizgi Bloklarını Gruplama (Run-Length - v50.0 ile aynı)
+    let runs = [];
+    let currentBit = scanline[0], runLen = 1;
+    for (let x = 1; x < scanline.length; x++) {
+        if (scanline[x] === currentBit) runLen++;
+        else {
+            if (runLen > 1) runs.push({ bit: currentBit, w: runLen });
+            currentBit = scanline[x]; runLen = 1;
+        }
+    }
+    runs.push({ bit: currentBit, w: runLen });
+
+    if (runs.length < 5) return null;
+
+    // -----------------------------------------------------------------
+    // 3. ARDIŞIK YOĞUN PAKET FİLTRESİ MOTORU (v50.3 Yeni Hesap Biçimi)
+    // -----------------------------------------------------------------
+    let startIndex = -1;
+
+    for (let i = 0; i < runs.length - 4; i++) {
+        if (runs[i].bit === 1) {
+            // İlk siyah çizgiyi bulduk. Şimdi peşinden gelen 4 bloku (çizgi/boşluk) inceliyoruz.
+            // Gerçek barkod paketinde barlar sıkışık olur. Eğer bu ilk çizgiyi takip eden
+            // blokların genişlikleri makul düzeyde yakınsa ve devasa bir boşluk yoksa yoğun alandayızdır.
+            const checkWidth1 = runs[i+1].w;
+            const checkWidth2 = runs[i+2].w;
+            
+            // Eğer ilk çizgiden hemen sonra gelen boşluk, o çizgiden 5 kat daha büyükse, 
+            // bu tek başına duran bir parazittir (Harf ucu veya kart kenarıdır). Atlama kararı al:
+            if (checkWidth1 > runs[i].w * 5) {
+                continue; 
+            }
+            
+            // Eğer burası parazit değilse ve ardışık barlar devam ediyorsa gerçek giriş noktamız burasıdır.
+            startIndex = i;
+            break;
+        }
+    }
+
+    // Yoğun paket kriterine uyan bir giriş noktası bulunamadıysa taramayı pas geç
+    if (startIndex === -1) return null;
+
+    let binaryString = "";
+    let totalPixelWidth = 0;
+    let countedBlocks = 0;
+
+    // Gerçek barkod paketinin toplam genişliğini ölçüyoruz
+    const baseModule = runs[startIndex].w; 
+    let tempIdx = startIndex;
+    let estimatedTotalModules = 0;
+
+    while (tempIdx < runs.length && estimatedTotalModules < 13) {
+        let approxMods = Math.min(4, Math.max(1, Math.round(runs[tempIdx].w / baseModule)));
+        estimatedTotalModules += approxMods;
+        totalPixelWidth += runs[tempIdx].w;
+        countedBlocks++;
+        tempIdx++;
+    }
+
+    if (estimatedTotalModules < 13 || countedBlocks === 0) return null;
+
+    // Toplam genişliği 13'e bölerek milimetrik birim ölçüsünü bul
+    const estModule = totalPixelWidth / 13;
+    if (estModule < 1.0) return null;
+
+    // Çizgileri nihai 13 bitlik binary koda dönüştür
+    for (let b = 0; b < countedBlocks; b++) {
+        let idx = startIndex + b;
+        let exactModules = runs[idx].w / estModule;
+        let roundedModules = Math.min(4, Math.max(1, Math.round(exactModules)));
+        
+        binaryString += runs[idx].bit.toString().repeat(roundedModules);
+    }
+
+    if (binaryString.length === 13) {
+        return binaryString;
+    }
+
+    if (binaryString.length > 13) {
+        return binaryString.substring(0, 13);
+    }
+
+    return null;
+}
+
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
