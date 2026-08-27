@@ -13,7 +13,7 @@ const CARD_DATABASE = {
     "1010010110101": "Kupa J (Vale)",
     "1010011001001": "Maça 3",
     "1010101001001": "Maça A (As)",
-    "1010100110101": "Karo Q (Kız)" // Önceki testlerimizde bulduğumuz Kız kartı
+    "1010100110101": "Karo Q (Kız)", // Önceki testlerimizde bulduğumuz Kız kartı
 
 
 
