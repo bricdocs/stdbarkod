@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Tuval Destekli Barkod Okuyucu</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* Kameranın ortasındaki hedef çizgisi */
+        #scan-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
+        
+        /* İstediğiniz Canlı Çizgi Analiz Tuvali (Görseldeki Beyaz Şerit) */
+        #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
+        
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">EAN-13 Canlı Çizgi Analiz Motoru</h3>
+    
+    <!-- Kamera Görünümü -->
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <!-- Örnek görseldeki gibi barları canlı çizen tuval -->
+    <canvas id="debugCanvas"></canvas>
+
+    <!-- Algoritmanın pikselleri okuduğu gizli arka plan tuvali -->
+    <canvas id="processingCanvas" style="display:none;"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">Başlatılıyor...</span>
+        <br>
+        <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
+    </div>
+
+<script>
+const L_SET = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"];
+const G_SET = ["0100111", "0110011", "0011011", "0111001", "0001101", "0010011", "0000101", "0010001", "0001001", "0010111"];
+const R_SET = ["1110010", "1100110", "1101100", "1000010", "1011100", "1001110", "1010000", "1000100", "1001000", "1110100"];
+const FIRST_DIGIT_MAP = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+// Canlı Çizgi Tuvali Ayarları
+const debugCanvas = document.getElementById('debugCanvas');
+const dCtx = debugCanvas.getContext('2d');
+
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        });
+        video.srcObject = stream;
+        statusText.innerText = "Kamera aktif. Barkodu çizgiye ortalayın.";
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Görsel şeridin çözünürlüğünü netleştiriyoruz
+            debugCanvas.width = video.videoWidth;
+            debugCanvas.height = 100; 
+
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        statusText.innerText = "Kamera Başlatılamadı: " + err.message;
+    }
+}
+
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Görüntüyü işle ve sonucu al
+        const result = processFrame();
+        
+        if (result && result.length === 13) {
+            outputText.innerText = result;
+            if (navigator.vibrate) navigator.vibrate(150);
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = Math.floor(height / 2);
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+
+    // 1. Adaptif Siyah/Beyaz Dönüşümü
+    let scanline = [];
+    const windowSize = 9;
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        
+        let sum = 0, count = 0;
+        for (let i = -windowSize; i <= windowSize; i++) {
+            if (x + i >= 0 && x + i < width) {
+                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                count++;
+            }
+        }
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
+    }
+
+    // -----------------------------------------------------------------
+    // CANLI TUVAL ÇİZİMİ (Örnek Görseldeki Mekanizma)
+    // -----------------------------------------------------------------
+    dCtx.fillStyle = "#FFFFFF"; // Önce tüm şeridi beyaz yapıyoruz
+    dCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    // Algoritmanın o an siyah (1) olarak algıladığı her pikseli kırmızı şerit olarak çiziyoruz
+    dCtx.fillStyle = "#FF0000"; // Kırmızı barlar (Görseldeki gibi isteğe göre #000000 da yapılabilir)
+    for (let x = 0; x < width; x++) {
+        if (scanline[x] === 1) {
+            dCtx.fillRect(x, 0, 1, debugCanvas.height);
+        }
+    }
+    // -----------------------------------------------------------------
+
+    // 2. Çizgi Bloklarını Gruplama (Run-Length)
+    let runs = [];
+    let currentBit = scanline[0], runLen = 1;
+    for (let x = 1; x < scanline.length; x++) {
+        if (scanline[x] === currentBit) runLen++;
+        else {
+            if (runLen > 1) runs.push({ bit: currentBit, w: runLen });
+            currentBit = scanline[x]; runLen = 1;
+        }
+    }
+    runs.push({ bit: currentBit, w: runLen });
+
+    if (runs.length < 50) return null;
+
+    // 3. EAN-13 Sınır ve Oran Analizi
+    for (let i = 0; i < runs.length - 55; i++) {
+        if (runs[i].bit === 1 && runs[i+1].bit === 0 && runs[i+2].bit === 1) {
+            const estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
+            if (estModule < 1.0) continue;
+
+            let currentIdx = i + 3;
+            let leftBits = "", rightBits = "";
+
+            for (let c = 0; c < 24; c++) {
+                if (!runs[currentIdx]) break;
+                let mods = Math.min(4, Math.max(1, Math.round(runs[currentIdx].w / estModule)));
+                leftBits += runs[currentIdx].bit.toString().repeat(mods);
+                currentIdx++;
+            }
+
+            currentIdx += 5;
+
+            for (let c = 0; c < 24; c++) {
+                if (!runs[currentIdx]) break;
+                let mods = Math.min(4, Math.max(1, Math.round(runs[currentIdx].w / estModule)));
+                rightBits += runs[currentIdx].bit.toString().repeat(mods);
+                currentIdx++;
+            }
+
+            if (leftBits.length >= 42 && rightBits.length >= 42) {
+                let digits = [];
+                let structure = "";
+
+                for (let k = 0; k < 6; k++) {
+                    let part = leftBits.substring(k * 7, (k + 1) * 7);
+                    let lIdx = L_SET.indexOf(part);
+                    let gIdx = G_SET.indexOf(part);
+                    if (lIdx !== -1) { digits.push(lIdx); structure += "L"; }
+                    else if (gIdx !== -1) { digits.push(gIdx); structure += "G"; }
+                }
+
+                for (let k = 0; k < 6; k++) {
+                    let part = rightBits.substring(k * 7, (k + 1) * 7);
+                    let rIdx = R_SET.indexOf(part);
+                    if (rIdx !== -1) digits.push(rIdx);
+                }
+
+                let firstDigit = FIRST_DIGIT_MAP.indexOf(structure);
+                if (firstDigit !== -1 && digits.length === 12) {
+                    digits.unshift(firstDigit);
+                    return digits.join(""); 
+                }
+            }
+        }
+    }
+    return null;
+}
+
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
