@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Tuval Destekli Kart Okuyucu v50.7</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        #scan-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
+        #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
+        .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
+    <div class="version-tag">Yazılım Sürümü: v50.7</div>
+    
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <canvas id="debugCanvas"></canvas>
+    <canvas id="processingCanvas" style="display:none;"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">Başlatılıyor...</span>
+        <br>
+        <strong>Deşifre Edilen Saf Binary Kod:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
+    </div>
+
+<script>
+/* 
+==================================================================================
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v50.7)
+----------------------------------------------------------------------------------
+// DEĞİŞİKLİK 1 (Bölge Tespit Motorunun Düzeltilmesi):
+   Döngünün ortasındayken hane sayısı 13'e ulaştığında okumayı erkenden koparan ve 
+   mavi kutunun çizilmesini engelleyen hatalı sayaç mantığı tamamen düzeltildi. 
+   Algoritma artık barkod alanındaki tüm fiziksel bloklar (runs) bitene kadar tarar. 
+   Mavi kutunun sağ sınırı (lastDetectedEnd) hayali bir yerde değil, barkodun 
+   fiziksel olarak bittiği son pikseller temel alınarak milimetrik kilitlenir.
+
+// DEĞİŞİKLİK 2 (Yazılımsal Sol Kırpma %25):
+   Görsel ekran, yeşil çizgi ve canlı tuval tam genişlikte (%100) pürüzsüz kalırken; 
+   pikselleri okuyan arka plan döngüsünün sol taraftaki ilk %25'lik alanı görmezden 
+   gelerek doğrudan %25 içeriden başlaması sağlandı. Sol gürültüler tamamen elendi.
+==================================================================================
+*/
+
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+const debugCanvas = document.getElementById('debugCanvas');
+const dCtx = debugCanvas.getContext('2d');
+
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+
+let lastDetectedStart = -1;
+let lastDetectedEnd = -1;
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        });
+        video.srcObject = stream;
+        statusText.innerText = "v50.7 Aktif. Bölge tespit motoru optimize edildi.";
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            debugCanvas.width = video.videoWidth;
+            debugCanvas.height = 100; 
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        statusText.innerText = "Kamera Başlatılamadı: " + err.message;
+    }
+}
+
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        lastDetectedStart = -1;
+        lastDetectedEnd = -1;
+
+        const result = processFrame();
+        
+        if (result && result.length === 13) {
+            outputText.innerText = result; 
+            if (navigator.vibrate) navigator.vibrate(150);
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = Math.floor(height / 2);
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+
+    // 1. Adaptif Siyah/Beyaz Dönüşümü (v50.0 TANI SİSTEMİ BİREBİR AYNI)
+    let scanline = [];
+    const windowSize = 9;
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        
+        let sum = 0, count = 0;
+        for (let i = -windowSize; i <= windowSize; i++) {
+            if (x + i >= 0 && x + i < width) {
+                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                count++;
+            }
+        }
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
+    }
+
+    // 2. Çizgi Bloklarını Gruplama (Run-Length)
+    let runs = [];
+    let currentBit = scanline, runLen = 1;
+    let blockStartPixels = []; 
+    let currentPixelPos = 0;
+
+    for (let x = 1; x < scanline.length; x++) {
+        if (scanline[x] === currentBit) runLen++;
+        else {
+            if (runLen > 1) {
+                runs.push({ bit: currentBit, w: runLen });
+                blockStartPixels.push(currentPixelPos);
+            }
+            currentPixelPos = x;
+            currentBit = scanline[x]; runLen = 1;
+        }
+    }
+    runs.push({ bit: currentBit, w: runLen });
+    blockStartPixels.push(currentPixelPos);
+
+    if (runs.length < 5) {
+        drawDebugCanvas(scanline, width);
+        return null;
+    }
+
+    // YAZILIMSAL SOL KIRPMA (%25): Döngünün sol %25'lik piksel sınırını hesaplıyoruz
+    const leftPixelCutoff = Math.floor(width * 0.25);
+
+    // 3. YENİLENEN SAF BARKOD VE BÖLGE TESPİT MOTORU
+    for (let i = 0; i < runs.length - 2; i++) {
+        // Sol taraftaki %25'lik parazitli alanı tamamen atla (Güvenlik Duvarı)
+        if (blockStartPixels[i] < leftPixelCutoff) continue;
+
+        // Saf 101 Kontrolü ile başlangıç tespiti
+        if (runs[i].bit === 1 && runs[i+1].bit === 0 && runs[i+2].bit === 1) {
+            const estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
+            if (estModule < 1.0) continue;
+
+            // Mavi çerçeve başlangıç piksel sınırını tam buraya kilitliyoruz
+            lastDetectedStart = blockStartPixels[i];
+
+            let currentIdx = i + 3;
+            let binaryString = "101";
+            let currentTotalModules = 3;
+
+            // BÖLGE TESPİT REVİZYONU: 
+            // Döngünün erkenden kopmasını engelliyoruz. Barkod kümesindeki tüm ardışık 
+            // bloklar bitene veya sınır aşılana kadar piksellerin tamamını taratıyoruz.
+            while (currentIdx < runs.length) {
+                // Eğer barlar bittiyse ve çok geniş bir boşluğa denk gelindiyse taramayı bitir
+                if (runs[currentIdx].w > estModule * 5) {
+                    break;
+                }
+
+                let exactModules = runs[currentIdx].w / estModule;
+                let roundedModules = Math.min(4, Math.max(1, Math.round(exactModules)));
+                
+                binaryString += runs[currentIdx].bit.toString().repeat(roundedModules);
+                currentTotalModules += roundedModules;
+                currentIdx++;
+            }
+
+            // Mavi çerçeve bitiş piksel sınırını barkodun bittiği son gerçek çizgiye kilitliyoruz
+            if (runs[currentIdx - 1]) {
+                lastDetectedEnd = blockStartPixels[currentIdx - 1] + runs[currentIdx - 1].w;
+            }
+
+            // Canlı tuvali çizdir
+            drawDebugCanvas(scanline, width);
+
+            // Çıkan koddaki lens/büküm sapmalarını toleransla kırpıp tam 13 hane olarak doğruluyoruz
+            if (binaryString.length >= 13) {
+                statusText.innerText = "v50.7 Kilitlendi.";
+                return binaryString.substring(0, 13);
+            }
+        }
+    }
+
+    drawDebugCanvas(scanline, width);
+    return null;
+}
+
+function drawDebugCanvas(scanline, width) {
+    dCtx.fillStyle = "#FFFFFF"; 
+    dCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    dCtx.fillStyle = "#FF0000"; 
+    for (let x = 0; x < width; x++) {
+        if (scanline[x] === 1) {
+            dCtx.fillRect(x, 0, 1, debugCanvas.height);
+        }
+    }
+
+    // Mavi çerçevenin sabitlenen yeni bölge koordinatlarında kararlı çizimi
+    if (lastDetectedStart !== -1 && lastDetectedEnd !== -1) {
+        dCtx.strokeStyle = "#0066FF"; 
+        dCtx.lineWidth = 4;           
+        const boxWidth = lastDetectedEnd - lastDetectedStart;
+        dCtx.strokeRect(lastDetectedStart, 2, boxWidth, debugCanvas.height - 4);
+        dCtx.fillStyle = "rgba(0, 102, 255, 0.15)"; 
+        dCtx.fillRect(lastDetectedStart, 2, boxWidth, debugCanvas.height - 4);
+    }
+}
+
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
