@@ -48,6 +48,7 @@ VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v50.11)
    Yalnızca çözülen binary kod veritabanında (CARD_DATABASE) eşleştiğinde kart isminin 
    telaffuz edilmesi sağlandı. Kart bulunamazsa (YOK durumunda) konuşma motoru 
    hiçbir ses çıkarmayacaktır.
+// if (navigator.vibrate) navigator.vibrate(0); SATIRI COMMENTLENDI BEN TARAFINDAN
 ==================================================================================
 */
 
@@ -134,7 +135,7 @@ function scanLoop() {
                 lastSpokenTime = now;
             }
 
-            if (navigator.vibrate) navigator.vibrate(0);
+            //if (navigator.vibrate) navigator.vibrate(0);
         }
     }
     requestAnimationFrame(scanLoop);
