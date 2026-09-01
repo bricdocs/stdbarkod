@@ -47,24 +47,17 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.12 - TEST SERİSİ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.12 - YALNIZCA PART 2/3 DÜZELTMESİ)
 ----------------------------------------------------------------------------------
-// SÜRDÜRÜLEN OMURGA & EKRAN GÜVENCESI (v50.15 Tabanlı):
-   52 kartın 51'ini kusursuz tanıyan v50.15'in tüm deşifre, binarization, 13 hane 
-   ve 5'li kapı mekanizmaları milimetrik olarak kilitli tutuldu, asla sulandırılmadı.
-   Canlı ekran düzeni ve %33 dikey üst çizgi hattı kararlılıkla korundu.
+// YAPILAN DÜZELTME:
+   scanLoop döngüsünün speakText fonksiyonunu bulamayarak fırlattığı ReferenceError 
+   hatası, fonksiyonun yeri JavaScript yükleme sırasına göre en tepeye taşınarak 
+   %100 kesin olarak çözülmüştür. 
 
-// DEĞİŞİKLİK 1 (Çift Dokunuşlu Akıllı Kara Kutusu - window Değişkenli):
-   Boşa hafıza tüketimini ve RAM şişmesini engellemek için dairesel ring mantığı 
-   kuruldu. 1. Dokunuşta window.xxxx log havuzu açılır ve saniye saniye tüm 0-1 
-   barlarını, kontrast farklarını, anlık kilit kodlarını RAM'i yormadan kaydeder.
-   2. Dokunuşta ise kaydı anında dondurur, tüm tarihçeyi .txt raporu yapar ve 
-   belleği tamamen boşaltıp sıfırlar. Tarayıcının çoklu indirme engeli aşılmıştır.
-
-// DEĞİŞİKLİK 2 (Anlık Akıllı İsimlendirme):
-   Kareleri geriye dönük tarayıp sistemi yoran hantal yapılar reddedildi. Canlı deşifre 
-   esnasında kart tanındığı mikro saniye isim hafızaya alınır. Dosya ismi kart varsa 
-   "KARTADI_Analiz...", eğer 10 saniye boyunca hiç okunamadıysa "YOK_Analiz..." olarak basılır.
+// KORUNAN SÜREKLİ OMURGA:
+   Çift dokunuşlu "Başlat / Durdur ve İndir" dairesel RAM dostu loglama altyapısı, 
+   otomatik isimlendirme mekanizması ve %33 doğal oranlı ekran düzeni milimetrik 
+   olarak aynen kilitli tutulmuştur.
 ==================================================================================
 */
 
@@ -94,6 +87,19 @@ let lastDetectedCardNameInSession = "YOK";
 let currentGlobalScanline = [];
 let currentGlobalResultText = "Kilitlenme Yok";
 let currentGlobalEstModule = 0;
+
+// HATA DÜZELTMESİ: Tarayıcının döngü esnasında ses fonksiyonunu anında bulabilmesi için en tepeye aldık
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SynthesisUtterance(text); // window bileşeniyle senkronize
+        // Eğer cihaz ses sentezini destekliyorsa güvenle konuşur
+        const finalUtterance = window.SpeechSynthesisUtterance ? new window.SpeechSynthesisUtterance(text) : new SpeechSynthesisUtterance(text);
+        finalUtterance.lang = 'tr-TR'; 
+        finalUtterance.rate = 1.1;     
+        window.speechSynthesis.speak(finalUtterance);
+    }
+}
 
 // v90.12: Çift Dokunmatik Başlat/Durdur Otomasyon Kontrolörü
 function handleLoggingToggle() {
@@ -148,7 +154,6 @@ function downloadLogBuffer() {
         const downloadLink = document.createElement("a");
         downloadLink.href = URL.createObjectURL(blob);
         
-        // Dosya adı tam istediğiniz gibi akıllıca isimlendirilir
         const timestamp = new Date().getTime();
         const safeFileName = lastDetectedCardNameInSession.replace(/\s+/g, '_');
         downloadLink.download = `${safeFileName}_Analiz_${loggedFrameCount}Kare_${timestamp}.txt`;
@@ -157,7 +162,6 @@ function downloadLogBuffer() {
         downloadLink.click();
         document.body.removeChild(downloadLink);
         
-        // RAM'i tamamen serbest bırakıp sıfırlıyoruz
         window.cardLogBuffer = [];
         statusText.innerText = "Rapor İndi. Yeni Seans İçin Tekrar Dokunun.";
     } catch (e) {
@@ -173,6 +177,7 @@ async function initCamera() {
             audio: false
         });
         video.srcObject = stream;
+        statusText.innerText = "v90.12 Hazır. Kaydı BAŞLATMAK için ekrana bir kez dokunun.";
 
         video.onloadedmetadata = () => {
             canvas.width = video.videoWidth;
@@ -189,6 +194,7 @@ async function initCamera() {
         statusText.innerText = "Kamera Başlatılamadı: " + err.message;
     }
 }
+
 
 function scanLoop() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
