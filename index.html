@@ -3,17 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canlı Tuval ve Metinsel Screenshot Analiz Motoru v90.8</title>
+    <title>Canlı Tuval ve Dokunmatik Rapor Analiz Motoru v90.9</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
-        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; cursor: pointer; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* v90.8: Yeşil tarama çizgisi 2 cm yukarıdaki kararlı test konumunda (%33) kalmaya devam ediyor */
+        /* v90.9: Yeşil tarama çizgisi 2 cm yukarıdaki kararlı test konumunda (%33) kalmaya devam ediyor */
         #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
         
         #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
-        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; cursor: pointer; }
         .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
         .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
     </style>
@@ -22,9 +22,10 @@
 <body>
 
     <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
-    <div class="version-tag">Test Sürümü: v90.8</div>
+    <div class="version-tag">Test Sürümü: v90.9</div>
     
-    <div id="camera-container">
+    <!-- v90.9: Dokunmatik tetiği serbest bırakmak için tıklama yeteneği eklendi -->
+    <div id="camera-container" onclick="triggerCaptureAndDownload()">
         <video id="webcam" autoplay playsinline muted></video>
         <div id="scan-line"></div>
     </div>
@@ -32,7 +33,7 @@
     <canvas id="debugCanvas"></canvas>
     <canvas id="processingCanvas" style="display:none;"></canvas>
 
-    <div id="result-box">
+    <div id="result-box" onclick="triggerCaptureAndDownload()">
         <strong>Sistem Durumu:</strong> <span id="status">Kullanıcı etkileşimi bekleniyor...</span>
         <br>
         <strong>Deşifre Edilen Kart:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
@@ -41,22 +42,23 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.8 - TEST SERİSİ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.9 - TEST SERİSİ)
 ----------------------------------------------------------------------------------
 // SÜRDÜRÜLEN OMURGA GÜVENCESI (v50.15 Tabanlı):
    52 kartın 51'ini kusursuz tanıyan v50.15'in tüm deşifre, binarization, 13 hane 
    ve 5'li kapı mekanizmaları milimetrik olarak kilitli tutuldu, asla sulandırılmadı.
    Tarama hattı v90.2'deki gibi 2 cm yukarıda (%33 dikey konumunda) sabit bırakıldı.
 
-// DEĞİŞİKLİK 1 (Resim İndirme ve toDataURL Tamamen Silindi):
-   Telefonların ekran kartı (GPU) korumasını tetikleyen, kamera ikonunun git-gel yapıp 
-   "drilink" sesiyle sistemi kilitlemesine yol açan toDataURL yapısı tamamen imha edildi.
+// DEĞİŞİKLİK 1 (Mikrofon ve Ses Tanıma Tamamen Söküldü):
+   Donanımsal çakışmaya, hoparlör çıtırtılarına, "drilink" sesine ve gizlilik ikonunun 
+   git-gel yapmasına yol açan tüm SpeechRecognition (sesli komut) altyapısı kodun içinden 
+   tamamen kazındı. Cihaz sıfır gürültü seviyesine ulaştı.
 
-// DEĞİŞİKLİK 2 (Kütüphanesiz Metinsel Screenshot - .txt Raporu):
-   "SHOOT" dendiğinde sistem artık resim çekmez. Tam o milisaniyede hafızadan geçen 
-   tüm ham tarama şeridi piksellerini (0 ve 1 barlarını), dikey koordinatları ve 
-   çapa sınırlarını düz bir metin (not kağıdı) dosyasına dönüştürür. Güvenlik barajı 
-   kesin olarak delinmiş, donanım kilitlenmesi matematiksel olarak imkansızlaştırılmıştır.
+// DEĞİŞİKLİK 2 (Dokunmatik Tetikleyici - A Seçeneği):
+   Rapor indirme mekanizması ekrana dokunma (tıklama) tetiğine bağlandı. Kullanıcı sahada 
+   kartı sabitlediği an ekrana (kamera alanına veya sarı kutuya) bir kez dokunduğunda, 
+   o milisaniyedeki %33 dikey hattının tüm saf binary barları (0 ve 1'leri), koordinatları 
+   ve modül ölçüleri anında parlama_analizi_v90.9_[zaman].txt adıyla indirilir.
 ==================================================================================
 */
 
@@ -73,7 +75,6 @@ const outputText = document.getElementById('barcode-output');
 let lastDetectedStart = -1;
 let lastDetectedEnd = -1;
 
-// v90.8: Metin raporuna aktarılacak olan anlık ham tarama barları hafızası
 let currentGlobalScanline = [];
 let currentGlobalResultText = "- Tarama Yok -";
 let currentGlobalEstModule = 0;
@@ -92,15 +93,19 @@ function speakText(text) {
     }
 }
 
-// v90.8: Telefonun ekran kartına çarpmadan saniyede .txt raporu fırlatan yerli fonksiyon
+// v90.9: Ekrana her dokunulduğunda donanımı yormadan .txt raporu fırlatan fonksiyon
 function triggerCaptureAndDownload() {
+    // Ses motorunun kilitlenme ihtimaline karşı tarayıcıyı serbest bırakıyoruz
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
     try {
         const height = canvas.height;
         const centerY = Math.floor(height * 0.33);
         
-        // Laboratuvar Metin Dosyasının içeriğini milimetrik olarak kurguluyoruz
         let logContent = `==================================================\n`;
-        logContent += `  OPTIK PARLAMA VE KOORDINAT ANALIZ RAPORU (v90.8)\n`;
+        logContent += `  OPTIK PARLAMA VE KOORDINAT ANALIZ RAPORU (v90.9)\n`;
         logContent += `==================================================\n\n`;
         logContent += `[RAPOR ZAMANI]: ${new Date().toLocaleString()}\n`;
         logContent += `[TARAMA HATTI]: centerY = ${centerY}. piksel (Dikeyde Yukardan %33 Seviyesi)\n`;
@@ -121,16 +126,15 @@ function triggerCaptureAndDownload() {
         }
         
         logContent += `\n\n==================================================\n`;
-        logContent += `RAPOR SONU - v90.8 ANA OMURGA KORUMASI SEVIYESI\n`;
+        logContent += `RAPOR SONU - v90.9 DOKUNMATIK TETIK SERISI\n`;
         logContent += `==================================================\n`;
 
-        // Düz yazıyı tarayıcının indirebileceği güvenli bir metin bloğuna (Blob) çeviriyoruz
         const blob = new Blob([logContent], { type: "text/plain;charset=utf-8" });
         const downloadLink = document.createElement("a");
         downloadLink.href = URL.createObjectURL(blob);
         
         const timestamp = new Date().getTime();
-        downloadLink.download = `parlama_analizi_v90.8_${timestamp}.txt`;
+        downloadLink.download = `parlama_analizi_v90.9_${timestamp}.txt`;
         
         document.body.appendChild(downloadLink);
         downloadLink.click();
@@ -143,34 +147,6 @@ function triggerCaptureAndDownload() {
     }
 }
 
-function initVoiceCommander() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        console.warn("Bu cihazda ses tanıma desteklenmiyor.");
-        return;
-    }
-    
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-    
-    recognition.onresult = (event) => {
-        const lastIndex = event.results.length - 1;
-        const spokenText = event.results[lastIndex].transcript.trim().toLowerCase();
-        
-        if (spokenText.includes("shoot")) {
-            triggerCaptureAndDownload();
-        }
-    };
-    
-    recognition.onend = () => {
-        recognition.start();
-    };
-    
-    recognition.start();
-}
-
 async function initCamera() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -178,13 +154,20 @@ async function initCamera() {
             audio: false
         });
         video.srcObject = stream;
-        statusText.innerText = "v90.8 Aktif. Başlamak için ekrana bir kez dokunun.";
+        
+        // v90.9: Kullanıcıyı dokunmatik tetik konusunda bilgilendiriyoruz
+        statusText.innerText = "v90.9 Hazır. Rapor almak için ekrana dokunun.";
 
         video.onloadedmetadata = () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             debugCanvas.width = video.videoWidth;
             debugCanvas.height = 100; 
+            
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
             requestAnimationFrame(scanLoop);
         };
     } catch (err) {
@@ -233,7 +216,7 @@ function processFrame() {
     const width = canvas.width;
     const height = canvas.height;
     
-    // v90.8: Yeşil çizgiyle tam senkronize dikey üst tarama hattı (%33) korunuyor
+    // v90.9: Yeşil çizgiyle tam senkronize dikey üst tarama hattı (%33) korunuyor
     const centerY = Math.floor(height * 0.33); 
     const pixels = ctx.getImageData(0, centerY, width, 1).data;
 
@@ -253,7 +236,6 @@ function processFrame() {
         scanline.push(gray < (sum / count - 12) ? 1 : 0);
     }
 
-    // v90.8: Raporlama için o salisedeki ham binarize şeridi global hafızaya kopyalıyoruz
     currentGlobalScanline = scanline;
 
     let runs = [];
@@ -333,7 +315,6 @@ function processFrame() {
 
             if (!matchedPattern || estModule < 1.0) continue;
             
-            // v90.8: Raporlama için birim ölçü kalınlığını global hafızaya al
             currentGlobalEstModule = estModule;
             lastDetectedStart = blockStartPixels[i];
 
@@ -357,7 +338,7 @@ function processFrame() {
             drawDebugCanvas(scanline, width, centerY);
             
             if (binaryString.length === 13) {
-                statusText.innerText = "v90.8 Kilitlendi. Dinleniyor...";
+                statusText.innerText = "v90.9 Kilitlendi. Dinleniyor...";
                 finalBinaryResult = binaryString;
                 break; 
             }
@@ -391,14 +372,6 @@ function drawDebugCanvas(scanline, width, centerY) {
         dCtx.fillRect(lastDetectedStart, 2, boxWidth, dCtx.canvas.height - 4);
     }
 }
-
-window.addEventListener('click', () => {
-    if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
-    initVoiceCommander(); 
-    statusText.innerText = "v90.8 Metinsel Rapor Sistemi Aktif. Taranıyor...";
-});
 
 window.addEventListener('DOMContentLoaded', initCamera);
 </script>
