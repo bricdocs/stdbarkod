@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canlı Tuval ve Çizgili Yerel Screenshot Test Motoru v90.5</title>
+    <title>Canlı Tuval ve Çizgili Odaklı Yerel Screenshot Test Motoru v90.6</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
         #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* v90.5: Yeşil tarama çizgisi 2 cm yukarıdaki kararlı test konumunda (%33) kalmaya devam ediyor */
+        /* v90.6: Yeşil tarama çizgisi 2 cm yukarıdaki kararlı test konumunda (%33) kalmaya devam ediyor */
         #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
         
         #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
@@ -19,13 +19,13 @@
     </style>
     <script src="binary-data.js"></script>
     
-    <!-- v90.5: İnternet filtrelerini tamamen bypass eden, sizin indirdiğiniz YEREL ekran yakalama kütüphanesi -->
+    <!-- v90.6: Sizin indirdiğiniz ve GitHub'a yüklediğiniz yerel kütüphane bağlantısı aynen korundu -->
     <script src="html2canvas.min.js"></script>
 </head>
 <body>
 
     <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
-    <div class="version-tag">Test Sürümü: v90.5</div>
+    <div class="version-tag">Test Sürümü: v90.6</div>
     
     <div id="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
@@ -44,22 +44,22 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.5 - TEST SERİSİ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.6 - TEST SERİSİ)
 ----------------------------------------------------------------------------------
 // SÜRDÜRÜLEN OMURGA GÜVENCESI (v50.15 Tabanlı):
    52 kartın 51'ini kusursuz tanıyan v50.15'in tüm deşifre, binarization, 13 hane 
    ve 5'li kapı mekanizmaları milimetrik olarak kilitli tutuldu, asla sulandırılmadı.
    Tarama hattı v90.2'deki gibi 2 cm yukarıda (%33 dikey konumunda) sabit bırakıldı.
 
-// DEĞİŞİKLİK 1 (Tamamen İnternetsiz Yerel Kütüphane Bağlantısı):
-   Bulut sunucu engellerine takılan tüm harici link bağlantıları tamamen silindi.
-   Sizin bilgisayarınıza indirdiğiniz yerel html2canvas.min.js dosyası ana dizinden 
-   çağrılarak, internet hattı kesik olsa dahi screenshot mekanizmasının saniyesinde 
-   aktif olması sağlandı. Güvenli internet filtreleri tamamen bypass edildi.
+// DEĞİŞİKLİK 1 (Güvenlik Duvarını Aşan Odaklı Screenshot):
+   v90.5'te donanım kilitlenmesine ("drilink" sesi ve kamera ikon git-geline) yol açan 
+   html2canvas(document.body) kuralı revize edildi. Kütüphanenin tüm sayfayı ve arka 
+   planda çalışan gizli işlem piksellerini taraması yasaklandı. Sadece kamera kutusunu 
+   ve onun tam 2 cm yukarısına oturan yeşil tarama çizgisini kapsayan #camera-container 
+   elementi hedef alındı. Güvenlik barajı aşıldı, kilitlenme ortadan kaldırıldı.
 
 // KORUNAN KATMANLAR:
-   - "SHOOT" sesli komut kulaklığı ve çizgiler dahil tam ekran görüntüsü indiren 
-     tetikleyici sistem aynen korundu.
+   - "SHOOT" sesli komut kulaklığı ve yerel dosya tabanlı altyapı aynen korundu.
    - Titreşim ve bip sesinin kapalılık kararlılığı sürdürüldü.
 ==================================================================================
 */
@@ -91,24 +91,32 @@ function speakText(text) {
     }
 }
 
-// v90.5: Yerel kütüphane altyapısıyla çizgiler dahil TAM SCREENSHOT alan fonksiyon
+// v90.6: Mobil donanım ve güvenlik sınırlarına takılmadan ODAKLI SCREENSHOT alan yeni fonksiyon
 function triggerCaptureAndDownload() {
     if (typeof html2canvas !== "undefined") {
         try {
-            html2canvas(document.body).then(canvasElement => {
+            // v90.6 DÜZELTMESİ: Tüm gövde (body) yerine sadece kamera ve yeşil çizgi kabını hedef alıyoruz
+            const targetContainer = document.getElementById("camera-container");
+            
+            html2canvas(targetContainer, {
+                useCORS: true,      
+                logging: false,     
+                allowTaint: true    
+            }).then(canvasElement => {
                 const dataUrl = canvasElement.toDataURL("image/png");
                 const downloadLink = document.createElement("a");
                 downloadLink.href = dataUrl;
                 const timestamp = new Date().getTime();
-                downloadLink.download = `tam_ekran_screenshot_v90.5_${timestamp}.png`;
+                downloadLink.download = `odakli_kamera_screenshot_v90.6_${timestamp}.png`;
                 
                 document.body.appendChild(downloadLink);
                 downloadLink.click();
                 document.body.removeChild(downloadLink);
                 
-                statusText.innerText = "Yerel Tam Ekran Screenshot İndirildi!";
+                statusText.innerText = "Kutulu Odaklı Screenshot İndirildi!";
             }).catch(err => {
                 console.error("Screenshot hatası:", err);
+                statusText.innerText = "Hata: Donanım pikselleri kopyalanamadı.";
             });
         } catch (e) {
             console.error("Screenshot başlatılamadı:", e);
@@ -153,7 +161,7 @@ async function initCamera() {
             audio: false
         });
         video.srcObject = stream;
-        statusText.innerText = "v90.5 Aktif. Başlamak için ekrana bir kez dokunun.";
+        statusText.innerText = "v90.6 Aktif. Başlamak için ekrana bir kez dokunun.";
 
         video.onloadedmetadata = () => {
             canvas.width = video.videoWidth;
@@ -204,7 +212,7 @@ function processFrame() {
     const width = canvas.width;
     const height = canvas.height;
     
-    // v90.5: Yeşil çizgiyle tam senkronize dikey üst tarama hattı (%33) korunuyor
+    // v90.6: Yeşil çizgiyle tam senkronize dikey üst tarama hattı (%33) korunuyor
     const centerY = Math.floor(height * 0.33); 
     const pixels = ctx.getImageData(0, centerY, width, 1).data;
 
@@ -322,7 +330,7 @@ function processFrame() {
             drawDebugCanvas(scanline, width, centerY);
             
             if (binaryString.length === 13) {
-                statusText.innerText = "v90.5 Kilitlendi. Dinleniyor...";
+                statusText.innerText = "v90.6 Kilitlendi. Dinleniyor...";
                 finalBinaryResult = binaryString;
                 break; 
             }
@@ -361,7 +369,7 @@ window.addEventListener('click', () => {
         audioCtx.resume();
     }
     initVoiceCommander(); 
-    statusText.innerText = "v90.5 Yerel Altyapı Aktif. Taranıyor...";
+    statusText.innerText = "v90.6 Odaklı Sistem Hazır. Taranıyor...";
 });
 
 window.addEventListener('DOMContentLoaded', initCamera);
