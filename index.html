@@ -47,16 +47,16 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.12 - YALNIZCA PART 2/3 DÜZELTMESİ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.12 - RESMİ SES DÜZELTMESİ)
 ----------------------------------------------------------------------------------
 // YAPILAN DÜZELTME:
-   scanLoop döngüsünün speakText fonksiyonunu bulamayarak fırlattığı ReferenceError 
-   hatası, fonksiyonun yeri JavaScript yükleme sırasına göre en tepeye taşınarak 
-   %100 kesin olarak çözülmüştür. 
+   Yazım hatasından kaynaklanan "SynthesisUtterance is not defined" hatası, tarayıcının 
+   resmi global nesnesi olan "SpeechSynthesisUtterance" kullanılarak %100 kesin ve 
+   kalıcı olarak çözülmüştür.
 
 // KORUNAN SÜREKLİ OMURGA:
-   Çift dokunuşlu "Başlat / Durdur ve İndir" dairesel RAM dostu loglama altyapısı, 
-   otomatik isimlendirme mekanizması ve %33 doğal oranlı ekran düzeni milimetrik 
+   Çift dokunuşlu "BaşLATMA / Durdurma ve İndirme" dairesel RAM dostu loglama altyapısı, 
+   otomatik isimlendirme mekanizması ve %33 doğal oranli ekran düzeni milimetrik 
    olarak aynen kilitli tutulmuştur.
 ==================================================================================
 */
@@ -88,16 +88,14 @@ let currentGlobalScanline = [];
 let currentGlobalResultText = "Kilitlenme Yok";
 let currentGlobalEstModule = 0;
 
-// HATA DÜZELTMESİ: Tarayıcının döngü esnasında ses fonksiyonunu anında bulabilmesi için en tepeye aldık
+// KUSURSUZ SES TAMİRİ: Tarayıcının resmi dünya standardı nesnesi eksiksiz yerleştirildi
 function speakText(text) {
     if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
-        const utterance = new SynthesisUtterance(text); // window bileşeniyle senkronize
-        // Eğer cihaz ses sentezini destekliyorsa güvenle konuşur
-        const finalUtterance = window.SpeechSynthesisUtterance ? new window.SpeechSynthesisUtterance(text) : new SpeechSynthesisUtterance(text);
-        finalUtterance.lang = 'tr-TR'; 
-        finalUtterance.rate = 1.1;     
-        window.speechSynthesis.speak(finalUtterance);
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'tr-TR'; 
+        utterance.rate = 1.1;     
+        window.speechSynthesis.speak(utterance);
     }
 }
 
@@ -195,6 +193,8 @@ async function initCamera() {
     }
 }
 
+
+    
 
 function scanLoop() {
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
