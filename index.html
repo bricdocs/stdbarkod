@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canlı Tuval ve Kesin Blok Kilitlemeli Analiz Motoru v90.15</title>
+    <title>Canlı Tuval ve Dinamik Blok Kilitlemeli Analiz Motoru v90.16</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
         #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; cursor: pointer; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* v90.15: Yeşil tarama çizgisi %33 kararlı dikey test konumunda sımsıkı kalmaya devam ediyor */
+        /* v90.16: Yeşil tarama çizgisi %33 kararlı dikey test konumunda sımsıkı kalmaya devam ediyor */
         #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
         
         #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
@@ -26,7 +26,7 @@
 <body>
 
     <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
-    <div class="version-tag">Test Sürümü: v90.15</div>
+    <div class="version-tag">Test Sürümü: v90.16</div>
     
     <div id="camera-container" onclick="handleLoggingToggle()">
         <video id="webcam" autoplay playsinline muted></video>
@@ -37,7 +37,7 @@
     <canvas id="processingCanvas" style="display:none;"></canvas>
 
     <div id="result-box" onclick="handleLoggingToggle()">
-        <strong>Sistem Durumu:</strong> <span id="status">v90.15 Hazır. Röntgen kaydını BAŞLATMAK için ekrana dokunun.</span>
+        <strong>Sistem Durumu:</strong> <span id="status">v90.16 Hazır. Röntgen kaydını BAŞLATMAK için ekrana dokunun.</span>
         <br>
         <strong>Deşifre Edilen Kart:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
     </div>
@@ -45,15 +45,15 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.15 - BLOK KİLİTLEME DEVRİMİ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v90.16 - DİNAMİK BLOK TAMİRİ)
 ----------------------------------------------------------------------------------
-// ADIM ADIM SAF DÜZELTME (Fiziksel Blok Sayacı Entegrasyonu):
-   Giriş filtresi, maskeleme ve yuvarlama gibi yan teoriler tamamen devredışı tutuldu.
-   Döngünün karakter dizisi uzunluğuna (string length) bakarak 11. veya 12. blokta 
-   erkenden kaçıp sahte kartlar (Sinek Kız, Club 9 vb.) üretmesine neden olan zafiyet 
-   kökünden söküldü. Yerine, döngüyü başlangıç kapısından sonra tam 10 adet fiziksel 
-   bloğu (bar/boşluk) tek tek saymaya zorlayan Askeri Blok Filtresi getirildi. 
-   Döngü bittiğinde hane uzunluğu milimetrik olarak tam 13 değilse kod anında imha edilir.
+// ADIM ADIM SAF TAMİRAT (Dinamik Kapı Kontrollü Blok Kilidi):
+   v90.15'teki sabit 10 blok kuralının Kupa Papazı (HK) ve diğer geniş kapılarda 
+   yarattığı "Tarama Bekleniyor" donma hatası tamamen çözüldü. Sistemin başlangıçta 
+   yuttuğu kapı modül sayısına göre geriye kalan hedef fiziksel blok sayısı otomatik 
+   olarak dinamik kilit altına alındı (101 için 10, 1001 için 9, 101011/100011 için 7).
+   Ayrıca döngüden çıkan kodun son bitinin "1" olması şartı (barkod bitiş kuralı) 
+   askeri bir doğrulama kalkanı olarak entegre edildi.
 
 // SÜRDÜRÜLEN OMURGA & LOG ALTYAPISI:
    v50.15 tanı motoru yapısı, %33 tarama çizgisi konumu ve v90.13 çift dokunuşlu 
@@ -91,7 +91,7 @@ let currentGlobalRoundXRay = "- Akış Yok -";
 function speakText(text) {
     if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
-        const finalUtterance = window.SpeechSynthesisUtterance ? new window.SpeechSynthesisUtterance(text) : new window.SpeechSynthesisUtterance(text);
+        const finalUtterance = window.SpeechSynthesisUtterance ? new window.SpeechSynthesisUtterance(text) : new SpeechSynthesisUtterance(text);
         finalUtterance.lang = 'tr-TR'; 
         finalUtterance.rate = 1.1;     
         window.speechSynthesis.speak(finalUtterance);
@@ -125,20 +125,20 @@ function handleLoggingToggle() {
 function downloadLogBuffer() {
     try {
         let logContent = `====================================================================\n`;
-        logContent += `  BLOK KİLİTLEMELİ SAF YUVARLAMA RÖNTGEN RAPORU (v90.15)\n`;
+        logContent += `  DİNAMİK BLOK KİLİTLEMELİ SAF YUVARLAMA RAPORU (v90.16)\n`;
         logContent += `====================================================================\n\n`;
         logContent += `[KAYIT TARİHİ]: ${new Date().toLocaleString()}\n`;
         logContent += `[TOPLAM KAYDEDİLEN KARE]: ${loggedFrameCount} Kare (Yaklaşık ${Math.round(loggedFrameCount/30)} Saniye)\n`;
         logContent += `[OTOMATİK SEANS SONUCU]: ${lastDetectedCardNameInSession}\n`;
         logContent += `[TARAMA HATTI KOORDİNATI]: centerY = ${Math.floor(canvas.height * 0.33)}. piksel\n\n`;
         logContent += `--------------------------------------------------------------------\n`;
-        logContent += `HANE SANIYE TARİHÇESİ (Eksik Blok ve Sahte Kaçış Önleme Detayı):\n`;
+        logContent += `HANE SANIYE TARİHÇESİ (Dinamik Blok Sayacı ve Son Bit Kontrol Detayı):\n`;
         logContent += `--------------------------------------------------------------------\n\n`;
 
         logContent += window.cardLogBuffer.join("\n\n");
 
         logContent += `\n\n====================================================================\n`;
-        logContent += `RAPOR SONU - 10 FİZİKSEL BLOK KİLİTLENDİ - BELLEK TEMİZLENDİ\n`;
+        logContent += `RAPOR SONU - DİNAMİK BLOKLAR KİLİTLENDİ - BELLEK TEMİZLENDİ\n`;
         logContent += `====================================================================\n`;
 
         const blob = new Blob([logContent], { type: "text/plain;charset=utf-8" });
@@ -147,14 +147,14 @@ function downloadLogBuffer() {
         
         const timestamp = new Date().getTime();
         const safeFileName = lastDetectedCardNameInSession.replace(/\s+/g, '_');
-        downloadLink.download = `${safeFileName}_Blok_Kilit_${loggedFrameCount}Kare_${timestamp}.txt`;
+        downloadLink.download = `${safeFileName}_Dinamik_Blok_${loggedFrameCount}Kare_${timestamp}.txt`;
         
         document.body.appendChild(downloadLink);
         downloadLink.click();
         document.body.removeChild(downloadLink);
         
         window.cardLogBuffer = [];
-        statusText.innerText = "Blok Röntgen Raporu İndi. Yeni Seans İçin Tekrar Dokunun.";
+        statusText.innerText = "Dinamik Röntgen Raporu İndi. Yeni Seans İçin Tekrar Dokunun.";
     } catch (e) {
         console.error("Rapor fırlatılamadı:", e);
         statusText.innerText = "Rapor İndirme Hatası!";
@@ -168,7 +168,7 @@ async function initCamera() {
             audio: false
         });
         video.srcObject = stream;
-        statusText.innerText = "v90.15 Röntgen Motoru Hazır. Kayıt için ekrana dokunun.";
+        statusText.innerText = "v90.16 Röntgen Motoru Hazır. Kayıt için ekrana dokunun.";
 
         video.onloadedmetadata = () => {
             canvas.width = video.videoWidth;
@@ -342,13 +342,18 @@ function processFrame() {
             currentGlobalEstModule = estModule;
             lastDetectedStart = blockStartPixels[i];
 
-            // v90.15: Döngüyü karakter sayısına değil, tam 10 adet bağımsız fiziksel bloğu saymaya zorluyoruz!
+            // v90.16: Giriş kapısının karakteristiğine göre hedef bağımsız blok sayısı kilitleniyor
+            let targetBlocksCount = 10; // Klasik 101 kapısı için (3 hane başlangıç + 10 blok = 13)
+            if (binaryString === "1001") targetBlocksCount = 9;     // 4 hane başlangıç + 9 blok = 13
+            if (binaryString === "10011") targetBlocksCount = 8;    // 5 hane başlangıç + 8 blok = 13
+            if (binaryString === "100011") targetBlocksCount = 7;   // 6 hane başlangıç + 7 blok = 13
+            if (binaryString === "1011") targetBlocksCount = 9;     // 4 hane başlangıç + 9 blok = 13
+
             let xrayTrace = []; 
             let accumulatedModules = currentTotalModules; 
             let processedBlocksCount = 0;
-            const targetBlocksCount = 10; // Başlangıç kapısından sonra jilet gibi 10 blok sayılacak
 
-            xrayTrace.push(`  -> Başlangıç Kapısı Birikimi: ${accumulatedModules.toFixed(2)} birim (Şablon: ${binaryString})`);
+            xrayTrace.push(`  -> Başlangıç Kapısı Birikimi: ${accumulatedModules.toFixed(2)} birim (Şablon: ${binaryString}) | Hedef Blok Sayısı: ${targetBlocksCount}`);
 
             while (currentIdx < runs.length && processedBlocksCount < targetBlocksCount) {
                 let exactModules = runs[currentIdx].w / estModule;
@@ -360,14 +365,14 @@ function processFrame() {
 
                 binaryString += runs[currentIdx].bit.toString().repeat(roundedModules);
                 currentIdx++;
-                processedBlocksCount++; // Fiziksel blok başarıyla yutulduğunda sayaç 1 artar
+                processedBlocksCount++;
             }
 
             currentGlobalRoundXRay = xrayTrace.join("\n");
 
-            // ASKERİ DOĞRULAMA: Harf uzunluğu milimetrik olarak tam 13 değilse VEYA 
-            // 10 bloğun tamamı fiziksel olarak tek tek taranmadıysa sahte şifreyi İMHA ET!
-            if (binaryString.length !== 13 || processedBlocksCount !== targetBlocksCount) {
+            // ASKERİ DOĞRULAMA: Dinamik blok sayısı hedefe ulaşmadıysa VEYA harf uzunluğu 
+            // tam 13 değilse VEYA barkodun son biti "1" ile mühürlenmediyse kod dizilimini İMHA ET!
+            if (processedBlocksCount !== targetBlocksCount || binaryString.length !== 13 || binaryString.charAt(12) !== "1") {
                 binaryString = ""; 
             }
 
@@ -378,7 +383,7 @@ function processFrame() {
             drawDebugCanvas(scanline, width, centerY);
             
             if (binaryString.length === 13) {
-                statusText.innerText = "v90.15 Kilitlendi. Dinleniyor...";
+                statusText.innerText = "v90.16 Kilitlendi. Dinleniyor...";
                 finalBinaryResult = binaryString;
                 break; 
             }
