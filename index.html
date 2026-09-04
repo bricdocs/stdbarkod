@@ -89,13 +89,14 @@ let currentGlobalEstModule = 0;
 function speakText(text) {
     if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
-        const utterance = new SynthesisUtterance(text); // window.SpeechSynthesisUtterance düzeltmesi
+        // HATA TEMİZLENDİ: Tarayıcının öz be öz resmi nesnesi çağrıldı!
         const utteranceCorrected = new SpeechSynthesisUtterance(text);
         utteranceCorrected.lang = 'tr-TR'; 
         utteranceCorrected.rate = 1.1;     
         window.speechSynthesis.speak(utteranceCorrected);
     }
 }
+
 
 function toggleConsoleLogging() {
     if (!isConsoleLoggingActive) {
