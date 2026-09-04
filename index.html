@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Tuval Zoomlu Motor v91.11</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
+        #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
+        .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
+        #log-toggle-btn { width: 90%; max-width: 500px; margin-top: 15px; padding: 14px; background: #222; border: 2px solid #ffcc00; color: #ffcc00; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; text-align: center; box-shadow: 0 0 10px rgba(255,204,0,0.2); transition: all 0.2s ease; }
+        .btn-active { background: #ffcc00 !important; color: #000 !important; animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.7; } }
+    </style>
+    <script src="binary-data.js"></script>
+    <script src="html2canvas.min.js"></script>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
+    <div class="version-tag">1.3x Zoomlu Kararlı Sürüm: v92.1</div>
+    
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <button id="log-toggle-btn" onclick="toggleConsoleLogging()">📊 KONSOL LOGUNU BAŞLAT</button>
+
+    <canvas id="debugCanvas"></canvas>
+    <canvas id="processingCanvas" style="display:none;"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">v92.1 Hazır. 1.3x Sabit Zoom ve Orijinal -12 Süzgeci Aktif.</span>
+        <br>
+        <strong>Deşifre Edilen Kart:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
+    </div>
+
+<script>
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const debugCanvas = document.getElementById('debugCanvas');
+const dCtx = debugCanvas.getContext('2d');
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+const logBtn = document.getElementById('log-toggle-btn');
+
+let lastDetectedStart = -1;
+let lastDetectedEnd = -1;
+let lastSpokenCard = "";
+let lastSpokenTime = 0;
+let audioCtx = null;
+let isConsoleLoggingActive = false;
+let globalConsoleFrameCount = 0;
+let currentGlobalScanline = [];
+let currentGlobalResultText = "Kilitlenme Yok";
+let currentGlobalEstModule = 0;
+
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utteranceCorrected = new SpeechSynthesisUtterance(text);
+        utteranceCorrected.lang = 'tr-TR'; 
+        utteranceCorrected.rate = 1.1;     
+        window.speechSynthesis.speak(utteranceCorrected);
+    }
+}
+
+function toggleConsoleLogging() {
+    if (!isConsoleLoggingActive) {
+        isConsoleLoggingActive = true;
+        logBtn.innerText = "🛑 LOGU DURDUR (EKRANI DONDUR)";
+        logBtn.classList.add("btn-active");
+        statusText.innerText = "Zoomlu ve kararlı akış izleniyor... F12 ekranına bakın.";
+    } else {
+        isConsoleLoggingActive = false;
+        logBtn.innerText = "📊 KONSOL LOGUNU BAŞLAT";
+        logBtn.classList.remove("btn-active");
+        statusText.innerText = "Log akışı durduruldu. 1.3x donanımsal zırh verilerini inceleyin.";
+    }
+}
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = async () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            debugCanvas.width = video.videoWidth;
+            debugCanvas.height = 50; 
+
+            // v92.1: Mikro platform için usta talimatıyla 1.3x donanımsal sabit zoom zırhı entegrasyonu!
+            try {
+                const track = stream.getVideoTracks()[0];
+                const capabilities = track.getCapabilities();
+                if (capabilities.zoom) {
+                    const minZoom = capabilities.zoom.min || 1.0;
+                    const maxZoom = capabilities.zoom.max || 1.0;
+                    // 1.3x değerinin donanım sınırları içerisinde kalmasını emniyete alıyoruz
+                    let targetZoom = Math.min(maxZoom, Math.max(minZoom, 1.3));
+                    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+                }
+            } catch (zoomErr) {
+                console.log("Kamera donanım zoom emrini uygulayamadı: ", zoomErr);
+            }
+
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        statusText.innerText = "Kamera Başlatılamadı: " + err.message;
+    }
+}
+
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        lastDetectedStart = -1;
+        lastDetectedEnd = -1;
+        if (isConsoleLoggingActive) {
+            globalConsoleFrameCount++;
+        }
+        const result = processFrame();
+        if (result && result.length === 13) {
+            let cardName = "Bilinmeyen Kart";
+            let isFound = false;
+            if (typeof CARD_DATABASE !== "undefined" && CARD_DATABASE[result]) {
+                cardName = CARD_DATABASE[result];
+                currentGlobalResultText = `Kilitlendi: ${result} [${cardName}]`;
+                outputText.innerText = result + " [" + cardName + "]";
+                isFound = true; 
+            } else {
+                currentGlobalResultText = `Kilitlendi Ama Sözlükte Yok: ${result}`;
+                outputText.innerText = result + " [YOK]";
+            }
+            const now = Date.now();
+            if (result !== lastSpokenCard || (now - lastSpokenTime) > 3000) {
+                if (isFound) { speakText(cardName); }
+                lastSpokenCard = result;
+                lastSpokenTime = now;
+            }
+        } else {
+            currentGlobalResultText = "Kilitlenme Yok (Kör Nokta / Yuvarlama Sapması)";
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = Math.floor(height * 0.33); 
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+    let scanline = [];
+    const windowSize = 9;
+
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        let sum = 0, count = 0;
+        for (let i = -windowSize; i <= windowSize; i++) {
+            if (x + i >= 0 && x + i < width) {
+                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                count++;
+            }
+        }
+        // v92.1: Usta talimatıyla sarsılmaz orijinal -12 terazisine sımsıkı geri dönüldü!
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
+    }
+
+    currentGlobalScanline = scanline;
+    let runs = [];
+    if (scanline.length === 0) return null;
+    let currentBit = scanline; 
+    let runLen = 1;
+    let blockStartPixels = []; 
+    let currentPixelPos = 0;
+
+    for (let x = 1; x < scanline.length; x++) {
+        if (scanline[x] === currentBit) {
+            runLen++;
+        } else {
+            if (runLen > 1) {
+                runs.push({ bit: currentBit, w: runLen });
+                blockStartPixels.push(currentPixelPos);
+            }
+            currentPixelPos = x;
+            currentBit = scanline[x]; 
+            runLen = 1;
+        }
+    }
+    runs.push({ bit: currentBit, w: runLen });
+    blockStartPixels.push(currentPixelPos);
+
+    if (runs.length < 5) {
+        currentGlobalEstModule = 0;
+        drawDebugCanvas(scanline, width, centerY);
+        return null;
+    }
+
+    let finalBinaryResult = null;
+
+    for (let i = 0; i < runs.length - 3; i++) {
+
+        if (runs[i].bit === 1) {
+            let estModule = 1.0;
+            let currentIdx = i + 3;
+            let binaryString = "";
+            let currentTotalModules = 0;
+            let matchedPattern = false;
+
+            if (runs[i+1].bit === 0 && runs[i+1].w > runs[i].w * 2.5 && runs[i+2].bit === 1) {
+                if (runs[i+2].w > runs[i].w * 1.5) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 6;
+                    binaryString = "100011";
+                    currentTotalModules = 6;
+                    matchedPattern = true;
+                }
+            }
+            if (!matchedPattern) {
+                if (runs[i+1].bit === 0 && runs[i+1].w > runs[i].w * 1.5 && runs[i+2].bit === 1) {
+                    if (runs[i+2].w > runs[i].w * 1.5) {
+                        estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 5;
+                        binaryString = "10011";
+                        currentTotalModules = 5;
+                    } else {
+                        estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 4;
+                        binaryString = "1001";
+                        currentTotalModules = 4;
+                    }
+                    matchedPattern = true;
+                } 
+                else if (runs[i+1].bit === 0 && runs[i+2].bit === 1 && runs[i+2].w > runs[i].w * 1.5) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 4;
+                    binaryString = "1011";
+                    currentTotalModules = 4;
+                    matchedPattern = true;
+                } 
+                else if (runs[i+1].bit === 0 && runs[i+2].bit === 1) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
+                    binaryString = "101";
+                    currentTotalModules = 3;
+                    matchedPattern = true;
+                }
+            }
+
+            if (!matchedPattern || estModule < 1.0) continue;
+            currentGlobalEstModule = estModule;
+            lastDetectedStart = blockStartPixels[i];
+
+            if (isConsoleLoggingActive) {
+                console.log(`\n[KARE #${globalConsoleFrameCount}] === KİLİTLENME DENEMESİ BAŞLADI ===`);
+                console.log(`[KAPI KONUMU]: lastDetectedStart = X:${lastDetectedStart}px`);
+                console.log(`[MERKEZ TERAZİ]: Bu Kare İçin Ortak estModule = ${estModule.toFixed(2)}px`);
+                console.log(`--- DÖNGÜ İÇİNDEKİ HER BARIN estModule İLE CANLI TARTISI ---`);
+            }
+
+            let loopStepCounter = 0;
+
+            while (currentIdx < runs.length && currentTotalModules < 13) {
+                let exactModules = runs[currentIdx].w / estModule;
+                let roundedModules = Math.min(4, Math.max(1, Math.round(exactModules)));
+                
+                if (matchedPattern) {
+                    if (runs[currentIdx].bit === 0 && roundedModules === 3) {
+                        let isSpecialThreeWhiteCard = false;
+                        if (binaryString === "1011" || binaryString === "1001" || binaryString === "100011") {
+                            isSpecialThreeWhiteCard = true; 
+                        }
+                        if (!isSpecialThreeWhiteCard) {
+                            if (isConsoleLoggingActive) {
+                                console.log(`%c⚠ BEYAZ KALKAN: runs[${currentIdx}] Beyaz Boşluğu ${exactModules.toFixed(2)} Değeriyle 3 Hane Olmaya Çalıştı. 2 HANEYE (00) SABİTLENDİ!`, "color: #ffcc00; font-weight: bold;");
+                            }
+                            roundedModules = 2;
+                        }
+                    }
+                    else if (runs[currentIdx].bit === 1 && roundedModules === 3) {
+                        if (isConsoleLoggingActive) {
+                            console.log(`%c⚠ SİYAH KALKAN: runs[${currentIdx}] Siyah Barı ${exactModules.toFixed(2)} Değeriyle 3 Hane Olmaya Çalıştı. GEOMETRİK ENGELE TOSLADI VE 2 HANEYE (11) SABİTLENDİ!`, "color: #ff3333; font-weight: bold;");
+                        }
+                        roundedModules = 2;
+                    }
+                }
+
+                if (isConsoleLoggingActive) {
+                    let barColor = runs[currentIdx].bit === 1 ? "SİYAH" : "BEYAZ";
+                    console.log(`► Adım #${loopStepCounter} | runs[${currentIdx}] | Renk: ${barColor} | Genişlik: ${runs[currentIdx].w}px | w/estModule: ${exactModules.toFixed(2)} | roundedMod: ${roundedModules} | Mevcut estModule: ${estModule.toFixed(2)}px | Kümülatif Toplam Hane: ${currentTotalModules}`);
+                }
+
+                if (currentTotalModules + roundedModules > 13) {
+                    if (isConsoleLoggingActive) {
+                        console.log(`⚠ FREN: Adım #${loopStepCounter}'de Toplam Hane 13'ü GEÇECEĞİ İÇİN (${currentTotalModules} + ${roundedModules} = ${currentTotalModules + roundedModules}) Döngü Burada Durduruldu!`);
+                    }
+                    roundedModules = 13 - currentTotalModules;
+                }
+
+                binaryString += runs[currentIdx].bit.toString().repeat(roundedModules);
+                currentTotalModules += roundedModules;
+                loopStepCounter++;
+                currentIdx++;
+            }
+
+            if (runs[currentIdx - 1]) {
+                lastDetectedEnd = blockStartPixels[currentIdx - 1] + runs[currentIdx - 1].w;
+            }
+
+            if (isConsoleLoggingActive) {
+                let rontgenCardCheck = (typeof CARD_DATABASE !== "undefined" && CARD_DATABASE[binaryString]) 
+                                       ? CARD_DATABASE[binaryString] 
+                                       : "YOK";
+                console.log(`--- SEANS KAPANIŞ ÖZETİ ---`);
+                console.log(`• Fiziksel Olarak Taranabilen Toplam Bar Adedi (Adım): ${loopStepCounter}`);
+                console.log(`• Üretilen Binary Çıktı: ${binaryString} [${rontgenCardCheck}]`);
+                console.log(`• Mavi Kutunun Bittiği Koordinat (lastDetectedEnd): X:${lastDetectedEnd}px`);
+                console.log(`================================================================`);
+            }
+
+            drawDebugCanvas(scanline, width, centerY);
+            if (binaryString.length === 13) {
+                statusText.innerText = "v92.1 Donanım Zoom Aktif...";
+                finalBinaryResult = binaryString;
+                break; 
+            }
+        }
+    }
+
+    if (finalBinaryResult) return finalBinaryResult;
+    currentGlobalEstModule = 0;
+    drawDebugCanvas(scanline, width, centerY);
+    return null;
+}
+
+function drawDebugCanvas(scanline, width, centerY) {
+    dCtx.fillStyle = "#FFFFFF"; 
+    dCtx.fillRect(0, 0, dCtx.canvas.width, dCtx.canvas.height);
+    dCtx.fillStyle = "#FF0000"; 
+    for (let x = 0; x < width; x++) {
+        if (scanline[x] === 1) { dCtx.fillRect(x, 0, 1, dCtx.canvas.height); }
+    }
+    if (lastDetectedStart !== -1 && lastDetectedEnd !== -1) {
+        dCtx.strokeStyle = "#0066FF"; 
+        dCtx.lineWidth = 4;           
+        const boxWidth = lastDetectedEnd - lastDetectedStart;
+        dCtx.strokeRect(lastDetectedStart, 2, boxWidth, dCtx.canvas.height - 4);
+        dCtx.fillStyle = "rgba(0, 102, 255, 0.15)"; 
+        dCtx.fillRect(lastDetectedStart, 2, boxWidth, dCtx.canvas.height - 4);
+    }
+}
+
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
