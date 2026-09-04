@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Tuval Röntgen Analiz Motoru v91.1</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* v91.1: Yeşil tarama çizgisi %33 dikey konumunda kilitli tutuldu */
+        #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
+        
+        #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
+        #result-box { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #333; box-sizing: border-box; }
+        .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
+        .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
+        
+        /* v91.1: Cep Telefonu İçin Siyah Zeminli Röntgen ve Donmuş Tarihçe Paneli */
+        #rontgen-panel { width: 90%; max-width: 500px; margin-top: 15px; padding: 15px; background: #000000; border: 2px solid #ff3333; border-radius: 8px; box-sizing: border-box; font-family: monospace; font-size: 14px; line-height: 1.5; }
+        .rontgen-header { color: #ffcc00; font-weight: bold; border-bottom: 1px dashed #333; padding-bottom: 5px; margin-bottom: 8px; font-size: 15px; }
+        .rontgen-success { color: #00ffcc; } /* Fosforlu Yeşil */
+        .rontgen-error { color: #ff3333; font-weight: bold; } /* Ateş Kırmızısı */
+        .rontgen-warn { color: #ffcc00; } /* Uyarı Sarısı */
+        
+        /* v91.1: Parmak Dostu Mobil Temizleme Butonu */
+        #clear-btn { width: 90%; max-width: 500px; margin-top: 10px; padding: 12px; background: #331111; border: 1px solid #ff3333; color: #ff9999; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 14px; text-align: center; }
+        #clear-btn:active { background: #551111; }
+    </style>
+    <script src="binary-data.js"></script>
+    <script src="html2canvas.min.js"></script>
+</head>
+<body>
+
+    <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
+    <div class="version-tag">Röntgen Sürümü: v91.1</div>
+    
+    <div id="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="scan-line"></div>
+    </div>
+
+    <canvas id="debugCanvas"></canvas>
+    <canvas id="processingCanvas" style="display:none;"></canvas>
+
+    <div id="result-box">
+        <strong>Sistem Durumu:</strong> <span id="status">v91.1 Aktif. Kartı fener altına getirin.</span>
+        <br>
+        <strong>Deşifre Edilen Kart:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
+    </div>
+
+    <!-- v91.1: Cep Telefonundan İzlenecek Canlı Röntgen Panel Alanı -->
+    <div id="rontgen-panel">
+        <div class="rontgen-header">🔍 CANLI RÖNTGEN VE DONMUŞ TARİHÇE</div>
+        <div id="rontgen-live-stats">
+            <div>Seri Okuma Sayacı: <span class="rontgen-success" id="stat-streak">0 Kare</span></div>
+            <div>Son Bar Erime Süresi: <span id="stat-drop">0 Kare</span></div>
+            <div>Sahte Kart Sızması: <span id="stat-infiltration">YOK</span></div>
+        </div>
+        <div style="border-top: 1px dashed #333; margin-top: 8px; padding-top: 8px; font-weight: bold; color: #888;">YAKALANAN KRİTİK SAHA OLAYLARI:</div>
+        <div id="rontgen-log-list" style="max-height: 150px; overflow-y: auto; margin-top: 5px;">
+            <div style="color:#666;">• Henüz bir istisna kaydedilmedi...</div>
+        </div>
+    </div>
+
+    <button id="clear-btn" onclick="clearRontgenHistory()">⚠️ GEÇMİŞİ TEMİZLE</button>
+
+<script>
+/* 
+==================================================================================
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v91.1 - RÖNTGEN VE DONMA SÜRÜMÜ)
+----------------------------------------------------------------------------------
+// YAPILAN DÜZELTME & ENTEGRASYON:
+   1. v91.0'ın hantal, dosyayı şişiren .txt loglama altyapısı INAKTIF (Yorum satırı) yapıldı.
+   2. Cep telefonu ekranının aşağı bakması sebebiyle, test esnasındaki mikro kopmaları, 
+      son bar erimelerini ve sahte kart sıçramalarını yakalayıp ekranda DONMUŞ olarak
+      saklayan "Gölge Dedektif" mekanizması kuruldu.
+   3. Mobil ekran videolarında jilet gibi çıkması için yüksek kontrastlı renk şeması eklendi.
+==================================================================================
+*/
+
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('processingCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+const debugCanvas = document.getElementById('debugCanvas');
+const dCtx = debugCanvas.getContext('2d');
+
+const statusText = document.getElementById('status');
+const outputText = document.getElementById('barcode-output');
+
+// v91.1: Röntgen Arayüz Elementleri
+const statStreak = document.getElementById('stat-streak');
+const statDrop = document.getElementById('stat-drop');
+const statInfiltration = document.getElementById('stat-infiltration');
+const rontgenLogList = document.getElementById('rontgen-log-list');
+
+let lastDetectedStart = -1;
+let lastDetectedEnd = -1;
+
+let lastSpokenCard = "";
+let lastSpokenTime = 0;
+let audioCtx = null;
+
+// v91.1: Gölge Dedektif İstatistik Değişkenleri
+let currentStreak = 0;          // Aynı kartın üst üste kaç karedir hatasız okunduğu
+let dropDuration = 0;           // Kilitlenmenin düşmesinin kaç kare sürdüğü (Son bar erimesi)
+let lastValidCardCode = "";     // En son başarıyla okunan 13 haneli meşru kod
+let lastValidCardName = "YOK";  // En son başarıyla okunan meşru kartın adı
+let isFirstLogAdded = false;
+
+let currentGlobalScanline = [];
+let currentGlobalResultText = "Kilitlenme Yok";
+let currentGlobalEstModule = 0;
+
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'tr-TR'; 
+        utterance.rate = 1.1;     
+        window.speechSynthesis.speak(utterance);
+    }
+}
+
+// v91.1: Tarihçeyi ve ekranı sıfırlayan parmak dostu mobil tetikleyici
+function clearRontgenHistory() {
+    currentStreak = 0;
+    dropDuration = 0;
+    lastValidCardCode = "";
+    lastValidCardName = "YOK";
+    isFirstLogAdded = false;
+    
+    statStreak.innerText = "0 Kare";
+    statDrop.innerText = "0 Kare";
+    statDrop.className = "";
+    statInfiltration.innerText = "YOK";
+    statInfiltration.className = "";
+    
+    rontgenLogList.innerHTML = `<div style="color:#666;">• Geçmiş temizlendi. Yeni av bekleniyor...</div>`;
+}
+
+// v91.1: Ekranda kalıcı olarak donacak olan istisna satırlarını panele ekleyen gölge dedektif fonksiyonu
+function addRontgenLog(message, type) {
+    if (!isFirstLogAdded) {
+        rontgenLogList.innerHTML = "";
+        isFirstLogAdded = true;
+    }
+    const logRow = document.createElement("div");
+    if (type === "error") logRow.className = "rontgen-error";
+    else if (type === "warn") logRow.className = "rontgen-warn";
+    else logRow.className = "rontgen-success";
+    
+    logRow.innerText = `• ${message}`;
+    rontgenLogList.insertBefore(logRow, rontgenLogList.firstChild); // En yeni olay en üste
+}
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        });
+        video.srcObject = stream;
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            debugCanvas.width = video.videoWidth;
+            debugCanvas.height = 100; 
+            
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            requestAnimationFrame(scanLoop);
+        };
+    } catch (err) {
+        statusText.innerText = "Kamera Başlatılamadı: " + err.message;
+    }
+}
+
+function scanLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        lastDetectedStart = -1;
+        lastDetectedEnd = -1;
+
+        const result = processFrame();
+        
+        // [SENARYO A]: MOTOR BU KAREDE 13 HANELİ BİR KARTI BAŞARIYLA OKUDU
+        if (result && result.length === 13) {
+            let cardName = "Bilinmeyen Kart";
+            let isFound = false;
+
+            if (typeof CARD_DATABASE !== "undefined" && CARD_DATABASE[result]) {
+                cardName = CARD_DATABASE[result];
+                currentGlobalResultText = `Kilitlendi: ${result} [${cardName}]`;
+                outputText.innerText = result + " [" + cardName + "]";
+                isFound = true; 
+            } else {
+                currentGlobalResultText = `Kilitlendi Ama Sözlükte Yok: ${result}`;
+                outputText.innerText = result + " [YOK]";
+            }
+
+            // GÖLGE DEDEKTİF TAKİP MATRİSİ:
+            if (isFound) {
+                if (result === lastValidCardCode) {
+                    // Aynı kart başarıyla okunmaya devam ediyor (Seri akış)
+                    currentStreak++;
+                    statStreak.innerText = `${currentStreak} Kare Üst Üste`;
+                    
+                    if (dropDuration > 0) {
+                        // Eğer bir önceki karelerde anlık kopma yaşandıysa ve şimdi kart geri geldiyse: DONMUŞ OLARAK KAYDET!
+                        addRontgenLog(`${cardName} okurken son bar anlık ${dropDuration} kare ERİDİ ve geri topladı!`, "warn");
+                        dropDuration = 0;
+                        statDrop.innerText = "0 Kare";
+                        statDrop.className = "";
+                    }
+                } else {
+                    // Araya sızan kart durumu (HK okunurken anlık C9 sızması gibi)
+                    if (lastValidCardCode !== "") {
+                        addRontgenLog(`${lastValidCardName} ekrandayken araya 1 kareliğine sahte ${cardName} sızdı!`, "error");
+                        statInfiltration.innerText = `${cardName} sızdı!`;
+                        statInfiltration.className = "rontgen-error";
+                    }
+                    // Yeni karta geçişi başlat
+                    currentStreak = 1;
+                    statStreak.innerText = "1 Kare";
+                    lastValidCardCode = result;
+                    lastValidCardName = cardName;
+                }
+            }
+
+            const now = Date.now();
+            if (result !== lastSpokenCard || (now - lastSpokenTime) > 3000) {
+                if (isFound) {
+                    speakText(cardName); 
+                }
+                lastSpokenCard = result;
+                lastSpokenTime = now;
+            }
+        } 
+        // [SENARYO B]: MOTOR BU KAREDE ANLIK PARLAMA VEYA SON BAR ERİMESİ YÜZÜNDEN KÖR KALDI
+        else {
+            currentGlobalResultText = "Kilitlenme Yok (Kör Nokta / Yuvarlama Sapması)";
+            
+            if (lastValidCardCode !== "") {
+                // Eğer daha önce kararlı bir kart varsa ve şu an motor körse, düşüş süresini başlatıyoruz
+                dropDuration++;
+                statDrop.innerText = `${dropDuration} Kare`;
+                statDrop.className = "rontgen-error";
+                
+                // Eğer körlük kritik bir sınıra ulaştıysa (Örn: üst üste 15 kare sürdüyse) artık kartın tamamen çekildiğini varsay
+                if (dropDuration === 15) {
+                    addRontgenLog(`${lastValidCardName} kartı ${currentStreak} kare seriden sonra masadan tamamen çekildi.`, "success");
+                    currentStreak = 0;
+                    statStreak.innerText = "0 Kare";
+                }
+            }
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function processFrame() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = Math.floor(height * 0.33); 
+    const pixels = ctx.getImageData(0, centerY, width, 1).data;
+
+    let scanline = [];
+    const windowSize = 9;
+    for (let x = 0; x < width; x++) {
+        const idx = x * 4;
+        const gray = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        
+        let sum = 0, count = 0;
+        for (let i = -windowSize; i <= windowSize; i++) {
+            if (x + i >= 0 && x + i < width) {
+                sum += (0.299 * pixels[(x+i)*4] + 0.587 * pixels[(x+i)*4+1] + 0.114 * pixels[(x+i)*4+2]);
+                count++;
+            }
+        }
+        scanline.push(gray < (sum / count - 12) ? 1 : 0);
+    }
+
+    currentGlobalScanline = scanline;
+
+    let runs = [];
+    let currentBit = scanline[0]; // v91.0'daki dizi atama hatası kökten temizlendi
+    let runLen = 1;
+    let blockStartPixels = []; 
+    let currentPixelPos = 0;
+
+    for (let x = 1; x < scanline.length; x++) {
+        if (scanline[x] === currentBit) {
+            runLen++;
+        } else {
+            if (runLen > 1) {
+                runs.push({ bit: currentBit, w: runLen });
+                blockStartPixels.push(currentPixelPos);
+            }
+            currentPixelPos = x;
+            currentBit = scanline[x]; 
+            runLen = 1;
+        }
+    }
+    runs.push({ bit: currentBit, w: runLen });
+    blockStartPixels.push(currentPixelPos);
+
+    if (runs.length < 5) {
+        currentGlobalEstModule = 0;
+        drawDebugCanvas(scanline, width, centerY);
+        return null;
+    }
+
+    const leftPixelCutoff = Math.floor(width * 0.25);
+    let finalBinaryResult = null;
+
+    for (let i = 0; i < runs.length - 3; i++) {
+        if (blockStartPixels[i] < leftPixelCutoff) continue;
+
+        if (runs[i].bit === 1) {
+            let estModule = 1.0;
+            let currentIdx = i + 3;
+            let binaryString = "";
+            let currentTotalModules = 0;
+            let matchedPattern = false;
+
+            if (runs[i+1].bit === 0 && runs[i+1].w > runs[i].w * 2.5 && runs[i+2].bit === 1) {
+                if (runs[i+2].w > runs[i].w * 1.5) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 6;
+                    binaryString = "100011";
+                    currentTotalModules = 6;
+                    matchedPattern = true;
+                }
+            }
+            
+            if (!matchedPattern) {
+                if (runs[i+1].bit === 0 && runs[i+1].w > runs[i].w * 1.5 && runs[i+2].bit === 1) {
+                    if (runs[i+2].w > runs[i].w * 1.5) {
+                        estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 5;
+                        binaryString = "10011";
+                        currentTotalModules = 5;
+                    } else {
+                        estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 4;
+                        binaryString = "1001";
+                        currentTotalModules = 4;
+                    }
+                    matchedPattern = true;
+                } 
+                else if (runs[i+1].bit === 0 && runs[i+2].bit === 1 && runs[i+2].w > runs[i].w * 1.5) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 4;
+                    binaryString = "1011";
+                    currentTotalModules = 4;
+                    matchedPattern = true;
+                } 
+                else if (runs[i+1].bit === 0 && runs[i+2].bit === 1) {
+                    estModule = (runs[i].w + runs[i+1].w + runs[i+2].w) / 3;
+                    binaryString = "101";
+                    currentTotalModules = 3;
+                    matchedPattern = true;
+                }
+            }
+
+            if (!matchedPattern || estModule < 1.0) continue;
+            
+            currentGlobalEstModule = estModule;
+            lastDetectedStart = blockStartPixels[i];
+
+            while (currentIdx < runs.length && currentTotalModules < 13) {
+                let exactModules = runs[currentIdx].w / estModule;
+                let roundedModules = Math.min(4, Math.max(1, Math.round(exactModules)));
+                
+                if (currentTotalModules + roundedModules > 13) {
+                    roundedModules = 13 - currentTotalModules;
+                }
+
+                binaryString += runs[currentIdx].bit.toString().repeat(roundedModules);
+                currentTotalModules += roundedModules;
+                currentIdx++;
+            }
+
+            if (runs[currentIdx - 1]) {
+                lastDetectedEnd = blockStartPixels[currentIdx - 1] + runs[currentIdx - 1].w;
+            }
+
+            drawDebugCanvas(scanline, width, centerY);
+            
+            if (binaryString.length === 13) {
+                statusText.innerText = "v91.1 Röntgen Dinlemede...";
+                finalBinaryResult = binaryString;
+                break; 
+            }
+        }
+    }
+
+    if (finalBinaryResult) return finalBinaryResult;
+
+    currentGlobalEstModule = 0;
+    drawDebugCanvas(scanline, width, centerY);
+    return null;
+}
+
+function drawDebugCanvas(scanline, width, centerY) {
+    dCtx.fillStyle = "#FFFFFF"; 
+    dCtx.fillRect(0, 0, dCtx.canvas.width, dCtx.canvas.height);
+    
+    dCtx.fillStyle = "#FF0000"; 
+    for (let x = 0; x < width; x++) {
+        if (scanline[x] === 1) {
+            dCtx.fillRect(x, 0, 1, dCtx.canvas.height);
+        }
+    }
+
+    if (lastDetectedStart !== -1 && lastDetectedEnd !== -1) {
+        dCtx.strokeStyle = "#0066FF"; 
+        dCtx.lineWidth = 4;           
+        const boxWidth = lastDetectedEnd - lastDetectedStart;
+        dCtx.strokeRect(lastDetectedStart, 2, boxWidth, dCtx.canvas.height - 4);
+        dCtx.fillStyle = "rgba(0, 102, 255, 0.15)"; 
+        dCtx.fillRect(lastDetectedStart, 2, boxWidth, dCtx.canvas.height - 4);
+    }
+}
+
+window.addEventListener('DOMContentLoaded', initCamera);
+</script>
+</body>
+</html>
