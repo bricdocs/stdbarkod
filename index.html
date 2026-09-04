@@ -107,7 +107,7 @@ async function initCamera() {
                     const minZoom = capabilities.zoom.min || 1.0;
                     const maxZoom = capabilities.zoom.max || 1.0;
                     // 1.3x değerinin donanım sınırları içerisinde kalmasını emniyete alıyoruz
-                    let targetZoom = Math.min(maxZoom, Math.max(minZoom, 1.5));
+                    let targetZoom = Math.min(maxZoom, Math.max(minZoom, 1.0));
                     await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
                 }
             } catch (zoomErr) {
