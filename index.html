@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canlı Tuval Beyaz Kalkan Motoru v91.5</title>
+    <title>Canlı Tuval Beyaz Kalkan Motoru v91.6</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #fff; display: flex; flex-direction: column; align-items: center; padding-bottom: 30px; }
         #camera-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* v91.5: Yeşil tarama çizgisi %33 dikey konumunda taş gibi kilitli */
+        /* v91.6: Yeşil tarama çizgisi %33 dikey konumunda jilet gibi kilitli */
         #scan-line { position: absolute; top: 33%; left: 5%; width: 90%; height: 3px; background: #00ffcc; box-shadow: 0 0 10px #00ffcc; z-index: 10; }
         
         #debugCanvas { width: 90%; max-width: 500px; height: 50px; background: white; border: 3px solid #ffcc00; margin-top: 15px; border-radius: 4px; box-sizing: border-box; }
@@ -17,7 +17,7 @@
         .code-text { font-size: 24px; color: #ffcc00; font-weight: bold; letter-spacing: 2px; text-align: center; display: block; margin-top: 10px; }
         .version-tag { font-size: 11px; color: #888; text-align: right; width: 90%; max-width: 500px; margin-top: 5px; }
         
-        /* v91.5: Konsol Röntgen Akış Kontrolör Butonu */
+        /* v91.6: Konsol Teşhis Akış Kontrol Butonu */
         #log-toggle-btn { width: 90%; max-width: 500px; margin-top: 15px; padding: 14px; background: #222; border: 2px solid #ffcc00; color: #ffcc00; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; text-align: center; box-shadow: 0 0 10px rgba(255,204,0,0.2); transition: all 0.2s ease; }
         .btn-active { background: #ffcc00 !important; color: #000 !important; animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.7; } }
@@ -28,7 +28,7 @@
 <body>
 
     <h3 style="margin: 15px 0 5px 0;">Oyun Kartı Canlı Çizgi Analiz Motoru</h3>
-    <div class="version-tag">Beyaz Kalkan Sürümü: v91.5</div>
+    <div class="version-tag">Giriş Sonrası Kalkan: v91.6</div>
     
     <div id="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
@@ -41,7 +41,7 @@
     <canvas id="processingCanvas" style="display:none;"></canvas>
 
     <div id="result-box">
-        <strong>Sistem Durumu:</strong> <span id="status">v91.5 Hazır. Beyaz 3 Hane Tavan Bariyeri Aktif.</span>
+        <strong>Sistem Durumu:</strong> <span id="status">v91.6 Hazır. Giriş Kapısı Sonrası Kalkan Aktif.</span>
         <br>
         <strong>Deşifre Edilen Kart:</strong> <span id="barcode-output" class="code-text">- Tarama Bekleniyor -</span>
     </div>
@@ -49,14 +49,14 @@
 <script>
 /* 
 ==================================================================================
-VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v91.5 - BEYAZ KALKAN SÜRÜMÜ)
+VERSİYON LOGU & MANTIKSAL DEĞİŞİKLİKLER (v91.6 - GİRİŞ SONRASI KALKAN)
 ----------------------------------------------------------------------------------
 // YAPILAN DÜZELTME & ENTEGRASYON:
-   1. Ustanın dâhiyane tespitiyle: Beyaz boşlukların fener/PC ışığı altında şişerek 
-      2 hane (00) yerine haksız yere 3 hane (000) üretmesi engellendi.
-   2. while döngüsünün tam göbeğine "Beyaz Tavan Bariyeri" eklendi. Sözlükteki o 4 özel
-      kart hariç, 3 beyaz üreten tüm sahtekâr pikseller kapıda 2 haneye sabitlendi.
-   3. v91.2 çekirdek giriş kapısı omurgası ve v91.4 canlı konsol butonu aynen korundu.
+   1. v91.5'teki kalkanın giriş kapısının kendi içindeki meşru beyazları (örn: 100011'in
+      içindeki 3 beyazı) kesip kapıyı sakatlama hatası tamamen düzeltildi.
+   2. Kalkanın tetiklenme şartına "matchedPattern === true" zamanlama kilidi eklenerek
+      bariyerin SADECE GİRİŞ KAPISI BULUNDUKTAN SONRA aktif olması mühürlendi.
+   3. v91.2 çekirdek giriş omurgası ve v91.4 canlı konsol dondurma butonu korundu.
 ==================================================================================
 */
 
@@ -100,7 +100,7 @@ function toggleConsoleLogging() {
         isConsoleLoggingActive = true;
         logBtn.innerText = "🛑 LOGU DURDUR (EKRANI DONDUR)";
         logBtn.classList.add("btn-active");
-        statusText.innerText = "Konsol kalkan takibi akıyor... F12 ekranını açın.";
+        statusText.innerText = "Konsol zaman kilidi akıyor... F12 ekranını açın.";
     } else {
         isConsoleLoggingActive = false;
         logBtn.innerText = "📊 KONSOL LOGUNU BAŞLAT";
@@ -304,22 +304,15 @@ function processFrame() {
                 let roundedModules = Math.min(4, Math.max(1, Math.round(exactModules)));
                 
                 // ------------------------------------------------------------------------------
-                // v91.5: USTÂNIN ÖZEL BEYAZ TAVAN BARİYERİ (MATEMATİKSEL KORUMA)
+                // v91.6: USTÂNIN GİRİŞ SONRASI ZAMAN KİLİTLİ BEYAZ KALKANI
                 // ------------------------------------------------------------------------------
-                if (runs[currentIdx].bit === 0 && roundedModules === 3) {
-                    // Sadece iç kısmında 3 beyaz barındıran o 4 meşru kartın pasaportunu denetle
-                    let isSpecialThreeWhiteCard = false;
-                    if (binaryString === "1011" || binaryString === "1001" || binaryString === "100011") {
-                        // Eğer kapı uyuyorsa, bu adımdan sonra meşru 3 beyaz gelebilir, kilidi esnet
-                        isSpecialThreeWhiteCard = true; 
+                // Kalkan tam konuştuğumuz an devreye giriyor: Giriş kapısı başarıyla bittiyse (matchedPattern)
+                // ve taranan eleman BEYAZ ise ve haksız yere 3 hane (000) olmaya çalışıyorsa:
+                if (matchedPattern && runs[currentIdx].bit === 0 && roundedModules === 3) {
+                    if (isConsoleLoggingActive) {
+                        console.log(`%c⚠ KALKAN TETİKLENDİ: runs[${currentIdx}] Beyaz Boşluğu ${exactModules.toFixed(2)} Değeriyle 3 Hane Olmaya Çalıştı. KAPIDAN SONRAKİ KORUMA KURALINA GÖRE 2 HANEYE (00) SABİTLENDİ!`, "color: #ffcc00; font-weight: bold;");
                     }
-
-                    if (!isSpecialThreeWhiteCard) {
-                        if (isConsoleLoggingActive) {
-                            console.log(`%c⚠ KALKAN UYARISI: runs[${currentIdx}] Beyaz Boşluğu ${exactModules.toFixed(2)} Değeriyle 3 Hane Olmaya Çalıştı! GEOMETRİK ENGELE TOSLADI VE 2 HANEYE SABİTLENDİ.`, "color: #ffcc00; font-weight: bold;");
-                        }
-                        roundedModules = 2; // Sahtekâr yuvarlamayı zınk diye meşru sınıra indir
-                    }
+                    roundedModules = 2; // Sahtekâr yuvarlamayı jilet gibi meşru tavan sınırına çek!
                 }
                 // ------------------------------------------------------------------------------
 
@@ -356,7 +349,7 @@ function processFrame() {
             drawDebugCanvas(scanline, width, centerY);
             
             if (binaryString.length === 13) {
-                statusText.innerText = "v91.5 Kalkan Aktif. Dinlemede...";
+                statusText.innerText = "v91.6 Kalkan Kilitlendi. Dinlemede...";
                 finalBinaryResult = binaryString;
                 break; 
             }
