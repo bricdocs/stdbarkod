@@ -100,19 +100,18 @@ async function initCamera() {
             debugCanvas.height = 50; 
 
             // v92.1: Mikro platform için usta talimatıyla 1.3x donanımsal sabit zoom zırhı entegrasyonu!
-            try {
-                const track = stream.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                if (capabilities.zoom) {
-                    const minZoom = capabilities.zoom.min || 1.0;
-                    const maxZoom = capabilities.zoom.max || 1.0;
-                    // 1.3x değerinin donanım sınırları içerisinde kalmasını emniyete alıyoruz
-                    let targetZoom = Math.min(maxZoom, Math.max(minZoom, 1.0));
-                    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
-                }
-            } catch (zoomErr) {
-                console.log("Kamera donanım zoom emrini uygulayamadı: ", zoomErr);
-            }
+ // O ENGEL ÇIKARAN ÜST SATIRLARI VE MATH.MAX MANTIĞINI TAMAMEN DEVRE DIŞI BIRAKIYORUZ:
+try {
+    const track = stream.getVideoTracks()[0];
+    
+    // Kameraya doğrudan, hiçbir donanım kısıtına takılmadan katı 0.80 emrini basıyoruz!
+    // Eğer telefonda geniş açı lensi varsa tarayıcı mecburen o lensi tetikleyecek.
+    await track.applyConstraints({ advanced: [{ zoom: 0.80 }] });
+    
+} catch (zoomErr) {
+    console.log("Kamera 0.80 geniş açı emrini fiziksel olarak uygulayamadı: ", zoomErr);
+}
+
 
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
